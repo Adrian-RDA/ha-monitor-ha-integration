@@ -1,0 +1,66 @@
+{
+  "title": "HA Monitor",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect HA Monitor",
+        "description": "Enter the HTTPS base URL of your Laravel server and a new pairing code from its instance page. Codes expire after ten minutes and can be used once. If a response is lost, create a new code before trying again.",
+        "data": {"server_url": "HTTPS server URL", "pairing_code": "Pairing code"}
+      },
+      "reauth_confirm": {
+        "title": "Reconnect HA Monitor",
+        "description": "The agent token was revoked or is invalid. Create a new pairing code for the same instance in Laravel, then enter it here. Issuing a code immediately invalidates the previous token.",
+        "data": {"server_url": "HTTPS server URL", "pairing_code": "New pairing code"}
+      },
+      "reconfigure": {
+        "title": "Change receiver or pair again",
+        "description": "Enter the receiver URL and a new pairing code for the same instance UUID. To connect a different instance, add a separate integration. Pairing consumes the code even if its instance does not match.",
+        "data": {"server_url": "HTTPS server URL", "pairing_code": "New pairing code"}
+      }
+    },
+    "error": {
+      "invalid_url": "Enter an HTTPS base URL without credentials, query parameters or a fragment. A path prefix is supported.",
+      "invalid_code": "The pairing code must contain exactly 32 lowercase hexadecimal characters.",
+      "invalid_auth": "The code is invalid, expired, already used, or its instance is disabled. Create a new code in Laravel.",
+      "cannot_connect": "Unable to reach the receiver. Check the address and network. If the code may have been consumed, create a new one.",
+      "server_error": "The receiver reported a temporary error. If the code may have been consumed, create a new one before trying again.",
+      "rate_limited": "The receiver is rate limiting requests. Wait at least {retry_after} seconds before trying again.",
+      "tls_error": "TLS certificate verification failed. Correct the receiver's certificate, certificate chain, hostname or trusted CA configuration.",
+      "forbidden": "The receiver refused this request. Check its HTTPS ingress, trusted proxy configuration and instance configuration.",
+      "invalid_response": "The receiver returned an incompatible or incomplete response. Check that it implements protocol v1. If pairing consumed the code, create a new one.",
+      "protocol_error": "The receiver rejected this request. Check the server URL, protocol version and receiver configuration. Create a new code if needed."
+    },
+    "abort": {
+      "already_configured": "This instance is already configured. Use Reconfigure to pair it again.",
+      "unique_id_mismatch": "The code belongs to a different instance. The existing entry was left unchanged. Create a new code for the correct instance; the submitted code has been consumed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Heartbeat transmission",
+        "description": "Send only instance identity, heartbeat timestamps, Home Assistant version and integration version. The interval is supplied by the receiver (normally 60 seconds). Pausing makes the receiver's status become stale. Changes reload the integration and discard the in-memory retry buffer.",
+        "data": {"enabled": "Enable heartbeat transmission"}
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Upload status",
+        "state": {"online": "Online", "retrying": "Retrying", "reauth_required": "Authentication required", "blocked": "Upload stopped", "paused": "Paused"}
+      },
+      "last_heartbeat": {"name": "Last acknowledged heartbeat"},
+      "pending_events": {"name": "Pending heartbeats"}
+    }
+  },
+  "exceptions": {
+    "invalid_auth": {"message": "The HA Monitor agent token is invalid or revoked. Pair this instance again with a new code."}
+  },
+  "issues": {
+    "upload_blocked": {
+      "title": "HA Monitor uploads have stopped",
+      "description": "The receiver or local payload failed a permanent check: {reason}. No unchanged uploads will be retried. Check the receiver's protocol v1 compatibility, instance UUID, HTTPS ingress, certificate chain and system clocks. For HTTP 400/413/415/422, correct the receiver/payload compatibility; for 403, correct ingress or instance configuration. Correct the cause, then reload the integration. Use Reconfigure with a new pairing code if the receiver URL or credentials changed. TLS certificate verification cannot be disabled."
+    }
+  }
+}

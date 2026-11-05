@@ -1,0 +1,32 @@
+[project]
+name = "ha-monitor-ha-integration"
+version = "0.1.0"
+description = "Home Assistant outbound heartbeat integration for HA Monitor"
+requires-python = ">=3.14.2"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest-homeassistant==2026.11.0",
+    "pytest-cov==7.1.0",
+    "pytest-timeout==2.4.0",
+    "ruff==0.17.3",
+    "trustme==1.2.1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-p no:respx --strict-markers --timeout=30 --cov=custom_components.ha_monitor_agent --cov-report=term-missing"
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true

@@ -1,0 +1,66 @@
+{
+  "title": "HA Monitor",
+  "config": {
+    "step": {
+      "user": {
+        "title": "HA Monitor verbinden",
+        "description": "HTTPS-Basisadresse des Laravel-Servers und einen neuen Kopplungscode aus dessen Instanzseite eingeben. Codes sind zehn Minuten gültig und einmal verwendbar. Geht die Antwort verloren, vor dem nächsten Versuch einen neuen Code erstellen.",
+        "data": {"server_url": "HTTPS-Serveradresse", "pairing_code": "Kopplungscode"}
+      },
+      "reauth_confirm": {
+        "title": "HA Monitor erneut verbinden",
+        "description": "Das Agent-Token wurde widerrufen oder ist ungültig. In Laravel einen neuen Kopplungscode für dieselbe Instanz erstellen und hier eingeben. Das Erstellen eines Codes widerruft sofort das vorherige Token.",
+        "data": {"server_url": "HTTPS-Serveradresse", "pairing_code": "Neuer Kopplungscode"}
+      },
+      "reconfigure": {
+        "title": "Empfänger ändern oder erneut koppeln",
+        "description": "Empfängeradresse und einen neuen Kopplungscode für dieselbe Instanz-UUID eingeben. Für eine andere Instanz eine separate Integration hinzufügen. Der Code wird auch bei einer abweichenden Instanz verbraucht.",
+        "data": {"server_url": "HTTPS-Serveradresse", "pairing_code": "Neuer Kopplungscode"}
+      }
+    },
+    "error": {
+      "invalid_url": "Eine HTTPS-Basisadresse ohne Zugangsdaten, Abfrageparameter oder Fragment eingeben. Ein Pfadpräfix ist möglich.",
+      "invalid_code": "Der Kopplungscode muss aus genau 32 kleinen hexadezimalen Zeichen bestehen.",
+      "invalid_auth": "Der Code ist ungültig, abgelaufen, bereits verwendet oder seine Instanz deaktiviert. In Laravel einen neuen Code erstellen.",
+      "cannot_connect": "Der Empfänger ist nicht erreichbar. Adresse und Netzwerk prüfen. Falls der Code verbraucht worden sein könnte, einen neuen erstellen.",
+      "server_error": "Der Empfänger meldet einen vorübergehenden Fehler. Falls der Code verbraucht worden sein könnte, vor dem nächsten Versuch einen neuen erstellen.",
+      "rate_limited": "Der Empfänger begrenzt Anfragen. Vor dem nächsten Versuch mindestens {retry_after} Sekunden warten.",
+      "tls_error": "Die TLS-Zertifikatsprüfung ist fehlgeschlagen. Zertifikat, Zertifikatskette, Hostname oder vertrauenswürdige CA-Konfiguration des Empfängers korrigieren.",
+      "forbidden": "Der Empfänger verweigert die Anfrage. HTTPS-Ingress, vertrauenswürdige Proxys und Instanzkonfiguration prüfen.",
+      "invalid_response": "Der Empfänger antwortet unvollständig oder inkompatibel. Unterstützung für Protokoll v1 prüfen. Falls die Kopplung den Code verbraucht hat, einen neuen erstellen.",
+      "protocol_error": "Der Empfänger hat die Anfrage abgelehnt. Serveradresse, Protokollversion und Empfängerkonfiguration prüfen. Bei Bedarf einen neuen Code erstellen."
+    },
+    "abort": {
+      "already_configured": "Diese Instanz ist bereits eingerichtet. Zum erneuten Koppeln die Integration neu konfigurieren.",
+      "unique_id_mismatch": "Der Code gehört zu einer anderen Instanz. Der bestehende Eintrag bleibt unverändert. Einen neuen Code für die richtige Instanz erstellen; der eingegebene Code wurde verbraucht."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Heartbeat-Übertragung",
+        "description": "Übertragen werden ausschließlich Instanzkennung, Heartbeat-Zeitpunkte, Home-Assistant-Version und Integrationsversion. Das Intervall gibt der Empfänger vor (normalerweise 60 Sekunden). Beim Pausieren wird der Status beim Empfänger veraltet. Änderungen laden die Integration neu und verwerfen den Wiederholungspuffer im Arbeitsspeicher.",
+        "data": {"enabled": "Heartbeat-Übertragung aktivieren"}
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Übertragungsstatus",
+        "state": {"online": "Online", "retrying": "Erneuter Versuch", "reauth_required": "Authentifizierung erforderlich", "blocked": "Übertragung gestoppt", "paused": "Pausiert"}
+      },
+      "last_heartbeat": {"name": "Letzter bestätigter Heartbeat"},
+      "pending_events": {"name": "Ausstehende Heartbeats"}
+    }
+  },
+  "exceptions": {
+    "invalid_auth": {"message": "Das Agent-Token von HA Monitor ist ungültig oder widerrufen. Diese Instanz mit einem neuen Code erneut koppeln."}
+  },
+  "issues": {
+    "upload_blocked": {
+      "title": "HA-Monitor-Übertragung wurde gestoppt",
+      "description": "Der Empfänger oder die lokalen Daten haben eine dauerhafte Prüfung nicht bestanden: {reason}. Unveränderte Uploads werden nicht wiederholt. Protokoll-v1-Kompatibilität, Instanz-UUID, HTTPS-Ingress, Zertifikatskette und Systemuhren prüfen. Bei HTTP 400/413/415/422 die Kompatibilität von Empfänger und Daten korrigieren; bei 403 Ingress oder Instanzkonfiguration korrigieren. Danach die Integration neu laden. Bei geänderter Empfängeradresse oder Zugangsdaten über Neu konfigurieren einen neuen Kopplungscode eingeben. Die TLS-Zertifikatsprüfung lässt sich nicht deaktivieren."
+    }
+  }
+}

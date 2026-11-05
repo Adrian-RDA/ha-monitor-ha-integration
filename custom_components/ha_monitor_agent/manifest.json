@@ -1,0 +1,12 @@
+{
+  "domain": "ha_monitor_agent",
+  "name": "HA Monitor",
+  "codeowners": ["@Adrian-RDA"],
+  "config_flow": true,
+  "documentation": "https://github.com/Adrian-RDA/ha-monitor-ha-integration",
+  "integration_type": "service",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/Adrian-RDA/ha-monitor-ha-integration/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
