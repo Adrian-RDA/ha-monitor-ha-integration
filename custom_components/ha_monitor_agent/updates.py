@@ -58,6 +58,30 @@ class UpdateObservation:
     def offered(self) -> bool:
         return self.availability in {"available", "skipped"}
 
+    @classmethod
+    def failed(cls, entity_id: str, selected: bool) -> UpdateObservation:
+        """Retain a failed source without propagating exception text or stale data."""
+        return cls(
+            entity_id=entity_id,
+            kind="other",
+            category="other",
+            source=None,
+            device_id=None,
+            device_name=None,
+            device_manufacturer=None,
+            device_model=None,
+            name=None,
+            availability="unavailable",
+            installed_version=None,
+            latest_version=None,
+            skipped_version=None,
+            supports_install=None,
+            in_progress=None,
+            disabled_by=None,
+            explicitly_selected=selected,
+            metadata_issues=("source_collection_failed",),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class UpdateInventory:
@@ -78,6 +102,8 @@ class UpdateInventory:
         for record in self.records:
             if record.availability in {"unknown", "unavailable"}:
                 reasons["source_unavailable"] += 1
+                if "source_collection_failed" in record.metadata_issues:
+                    reasons["source_collection_failed"] += 1
             elif record.availability == "disabled" and record.explicitly_selected:
                 reasons["selected_source_disabled"] += 1
         if len(self.offered) > 100:
@@ -135,6 +161,10 @@ class UpdateInventory:
             "skipped": states["skipped"],
             "disabled": states["disabled"],
             "unavailable": states["unknown"] + states["unavailable"],
+            "failed": sum(
+                "source_collection_failed" in record.metadata_issues
+                for record in self.records
+            ),
             "not_installable": sum(
                 record.supports_install is False for record in self.offered
             ),
@@ -291,10 +321,16 @@ def collect_update_inventory(
     ):
         return UpdateInventory("unavailable", collection_issues=("invalid_source",))
     explicit = set(selected) | (core_os if system_updates else set())
-    records = tuple(
-        _observe(hass, entity_id, entity_id in explicit)
-        for entity_id in sorted(sources)
-    )
+    observations = []
+    for entity_id in sorted(sources):
+        try:
+            record = _observe(hass, entity_id, entity_id in explicit)
+        except Exception:
+            # A bad source must not discard successful observations of its peers.
+            # Snapshot v1 still requires a non-ok *wire* collection if incomplete.
+            record = UpdateObservation.failed(entity_id, entity_id in explicit)
+        observations.append(record)
+    records = tuple(observations)
     if issues or any(
         record.availability in {"unknown", "unavailable"}
         or record.availability == "disabled"

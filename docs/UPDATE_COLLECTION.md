@@ -1,6 +1,6 @@
 # Update-Erfassung und Übergabe an Laravel
 
-Stand: Agent **0.2.2**. Der produktive Vertrag bleibt unverändert [Monitoring Snapshot v1](PROTOCOL.md#monitoring-snapshot-v1-sprint-5). Die unten beschriebene Laravel-Erweiterung ist ein **Arbeitsauftrag**, keine implementierte oder vom Agenten verwendete API.
+Stand: Agent **0.2.3**. Der produktive Vertrag bleibt unverändert [Monitoring Snapshot v1](PROTOCOL.md#monitoring-snapshot-v1-sprint-5). Die unten beschriebene Laravel-Erweiterung ist ein **Arbeitsauftrag**, keine implementierte oder vom Agenten verwendete API.
 
 ## Befund und Prüfumfang
 
@@ -23,6 +23,25 @@ Der komplette HA-Pfad einschließlich TLS-Payload, Bestätigung und simulierter 
 0.2.2 trennt beides. Lokale Vollerfassung bleibt erhalten; der Standardexport umfasst wieder Core/OS plus die explizite zusätzliche Auswahl. Das ist eine konfigurierte Abgrenzung und kein Filtern einer fehlgeschlagenen Quelle aus einem als vollständig behaupteten Export. Wer bewusst die Übertragung aller Fundstellen aktiviert, erhält weiter die strikte Vollständigkeitssemantik. Eine fehlerhafte **gewählte** Quelle sperrt die gewählte Sammlung nach wie vor. Die bereits dokumentierte Laravel-Erweiterung bleibt nötig, um beliebige Rohversionen und bekannte Teilbestände darzustellen.
 
 Regressionstests prüfen über den echten TLS-Client, dass Core, OS und ausgewählte App-/HACS-/Geräteupdates trotz einer nicht gewählten `unknown`-, `unavailable`-, Registry-ohne-State- oder inkompatiblen Firmwarequelle ankommen. Weitere Tests sichern Opt-in, bestehende gespeicherte Optionen, Reparaturhinweise und die Isolation unerwarteter Erfassungsfehler ab. Die produktive HA-Diagnose wurde nicht ausgelesen; der Mechanismus wurde im Repository reproduziert.
+
+## Prüfung der gemeldeten Konfiguration in 0.2.3
+
+Die vom Betreiber per HA Privat geprüften vier angebotenen Updates wurden als Regression übernommen. Mit `discover_updates=true`, `system_updates=true`, `export_all_updates=false`, `update_entities=[]` ist allein Core/OS zum Export freigegeben. In der Testkonstellation ist OS aktuell: lokal werden vier angebotene Updates gefunden, im Payload steht nur das Core-Update. Die fehlenden drei sind in dieser Konfiguration eine Folge der Exportauswahl, kein INSTALL-Filter.
+
+Für alle vier entweder **Alle gefundenen Update-Quellen übertragen** aktivieren oder Shelly, Immich und Proxmox ausdrücklich zur zusätzlichen Übertragung auswählen. Der Agent ändert keine laufenden HA-Einstellungen selbst. Die Regression prüft beide Wege über den realen, verifizierten HTTPS-Testclient bis zur simulierten Backend-Speicherung. Ab 0.2.3 setzt die Export-all-Option außerdem eine vorher deaktivierte lokale Suchoption für diesen Erfassungszweck außer Kraft; ein eingeschalteter Gesamtexport darf nicht auf einer unvollständigen lokalen Auswahl basieren.
+
+| Quelle | `supported_features` | INSTALL vorhanden | Verfügbare Quelle exportieren |
+| --- | --- | --- | --- |
+| Home Assistant Core | 15 | ja (`15 & 1`) | ja |
+| Shelly-Firmware | 5 | ja (`5 & 1`) | ja |
+| Immich | 0 | nein | ja |
+| Proxmox VE | 16 (Release Notes) | nein | ja |
+
+`supports_install` bleibt ein Metadatum. Titel, Installationsfunktion und semantische Versionssortierung sind keine Zulassungskriterien für eine `on`-Entität. Die Wire-Anzeige verwendet wie bisher feste Core/OS-Namen bzw. eine ausgewählte Entity-ID; `title` darf fehlen oder null sein. Die Tests verwenden kontrollierte, v1-kompatible Versionen, darunter `v2.3.1` und eine Proxmox-artige Kennung wie `8.4.1-p0-d17`. Die tatsächlichen Versionskennungen der Installation wurden nicht mitgeteilt oder abgefragt. Freie Herstellerkennungen außerhalb der bestehenden v1-Syntax werden lokal unverändert erhalten und weiterhin als nicht übertragbar gemeldet.
+
+Eine fehlende Fehlergrenze je `_observe()`-Aufruf wurde ergänzt. Ein Fehler einer Entität kann die Erfassung anderer Quellen jetzt weder vorzeitig abbrechen noch bereits erfolgreiche Beobachtungen verwerfen. Ein neutraler, nicht verfügbarer Fehlerrecord bleibt im Inventar, damit seine Quelle nicht als aktuell oder unbemerkt verschwunden gilt. Ausnahmeinhalte werden nicht protokolliert. Diagnosezähler `failed`, `known_available`, `export_item_count` und `blocked_known_available` unterscheiden lokale Teilerkenntnis von tatsächlich enthaltenen Wire-Items. Fehler einer nicht zum Export gewählten Quelle beeinflussen den getrennten gewählten Export nicht.
+
+**Grenze der Fehlerisolierung:** Für den Export einer gewählten vollständigen Sammlung bleibt der dokumentierte v1-Vertrag bindend. Eine fehlerhafte **gewählte** Quelle erzwingt `unavailable`/`[]`; eine bekannte Teilmenge als vollständige Liste zu übertragen wäre falsch. Ein aktualisierter implementierter Vertrag für Teilbestände liegt im Repository nicht vor. Die Anforderung „eine fehlerhafte Quelle darf niemals andere Updates im HTTP-Export blockieren“ bleibt deshalb eine erforderliche Backend-/Vertragserweiterung. Die darunter dokumentierten v2-Aufgaben bleiben offen; 0.2.3 behauptet keine Erfüllung dieser Wire-Anforderung.
 
 ## Aktueller Datenweg
 
@@ -48,7 +67,7 @@ Regressionstests prüfen über den echten TLS-Client, dass Core, OS und ausgewä
 
 Deaktivierte Entitäten liefern keine verlässliche neue Versionsbeobachtung. Insbesondere sind manche Shelly-Update-Entitäten laut offizieller HA-Integration standardmäßig deaktiviert. Ohne sie durch den Betreiber zu aktivieren oder eine separat vereinbarte native Datenquelle einzuführen, kann der Agent keine verfügbaren Updates dieser Geräte behaupten. Ebenso kann er keine Updates finden, die HA überhaupt nicht als Quelle bereitstellt. Versteckte, aber aktive Entitäten werden dagegen berücksichtigt.
 
-Der optionale lokale Sensor **Verfügbare Updates** zählt bekannte angebotene Updates einschließlich aktuell übersprungener Versionen, solange die lokale Abdeckung vollständig ist. Seine Attribute bzw. die Integrationsdiagnose enthalten nur Zähler und feste Fehlercodes: `pending`, `skipped`, `disabled`, `unavailable`, `not_installable`, `installability_unknown`, `known_available`, `protocol_status`, `protocol_issues`. Zusätzlich zeigen `export_scope`, `export_sources`, `export_known_available` und `not_exported` den tatsächlichen Exportumfang; `local_protocol_issues` beschreibt Probleme des vollständigen lokalen Bestands. `protocol_status` und `protocol_issues` beziehen sich dagegen auf die tatsächlich übertragene Sammlung. Bei unvollständiger Abdeckung wird der Sensor nicht verfügbar; `known_available` zeigt in der Integrationsdiagnose weiterhin die bekannte Untergrenze. Home Assistant blendet zusätzliche Sensorattribute im nicht verfügbaren Zustand aus. Ein lokaler Wert kann größer als die zur Übertragung gewählte Sammlung sein oder wegen einer inkompatiblen gewählten Quelle nicht übertragbar sein. Reale Auslassungen bekannter Updates und blockierte gewählte Sammlungen erzeugen zusätzlich einen Hinweis unter Einstellungen → System → Reparaturen. So ist die Eingrenzung sichtbar, ohne unbekannte Quellen als aktuell auszugeben. Keine Rohmetadaten werden in Logs, Diagnosen oder Entity-Attributen ausgegeben. Diagnosedaten lassen sich normalerweise unter Einstellungen → Geräte & Dienste → HA Monitor → ⋮ → Diagnosedaten herunterladen abrufen. Die relevanten Zähler stehen in `monitoring.updates`.
+Der optionale lokale Sensor **Verfügbare Updates** zählt bekannte angebotene Updates einschließlich aktuell übersprungener Versionen, solange die lokale Abdeckung vollständig ist. Seine Attribute bzw. die Integrationsdiagnose enthalten nur Zähler und feste Fehlercodes: `pending`, `skipped`, `disabled`, `unavailable`, `not_installable`, `installability_unknown`, `known_available`, `protocol_status`, `protocol_issues`. Zusätzlich zeigen `export_scope`, `export_sources`, `export_known_available`, `export_item_count` (Anzahl Wire-Items), `blocked_known_available` (durch den Vertrag zurückgehaltene bekannte Updates) und `not_exported` den tatsächlichen Exportumfang; `local_protocol_issues` beschreibt Probleme des vollständigen lokalen Bestands. `protocol_status` und `protocol_issues` beziehen sich dagegen auf die tatsächlich übertragene Sammlung. Bei unvollständiger Abdeckung wird der Sensor nicht verfügbar; `known_available` zeigt in der Integrationsdiagnose weiterhin die bekannte Untergrenze. Home Assistant blendet zusätzliche Sensorattribute im nicht verfügbaren Zustand aus. Ein lokaler Wert kann größer als die zur Übertragung gewählte Sammlung sein oder wegen einer inkompatiblen gewählten Quelle nicht übertragbar sein. Reale Auslassungen bekannter Updates und blockierte gewählte Sammlungen erzeugen zusätzlich einen Hinweis unter Einstellungen → System → Reparaturen. So ist die Eingrenzung sichtbar, ohne unbekannte Quellen als aktuell auszugeben. Keine Rohmetadaten werden in Logs, Diagnosen oder Entity-Attributen ausgegeben. Diagnosedaten lassen sich normalerweise unter Einstellungen → Geräte & Dienste → HA Monitor → ⋮ → Diagnosedaten herunterladen abrufen. Die relevanten Zähler stehen in `monitoring.updates`.
 
 ## Konkrete Aufgaben im Laravel-Repository
 
@@ -96,6 +115,8 @@ Datenbank/Projektion erweitern: genannte Metadaten und Abdeckung erhalten; Norma
 
 - [HA Update-Entität und Features](https://contributors.home-assistant.io/core/entities/update/)
 - [HA State-/Skip-Semantik](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/update/entity.py)
+- [Immich ohne Installationsfunktion](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/immich/update.py)
+- [Proxmox-Update-Entität mit Release-Notes-Fähigkeit](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/proxmoxve/update.py)
 - [Shelly-Update-Implementierung und Firmwarekennungen](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/shelly/update.py)
 
 Es wurde kein HA-Quellcode übernommen. Die Änderungen bleiben in diesem Repository; Laravel und Infrastruktur wurden nicht verändert.

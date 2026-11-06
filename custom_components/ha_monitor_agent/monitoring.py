@@ -81,7 +81,11 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             inventory = collect_inventory(self.hass)
         except Exception:
             inventory = {key: observation("unavailable") for key in INVENTORY_KEYS}
-        discover = self.entry.options.get(CONF_DISCOVER_UPDATES, True)
+        # Export-all is independently actionable: it necessarily reads all sources
+        # even if the local-only discovery preference was previously switched off.
+        discover = self.entry.options.get(
+            CONF_DISCOVER_UPDATES, True
+        ) or self.entry.options.get(CONF_EXPORT_ALL_UPDATES, False)
         self.update_inventory = self._collect_updates(discover=discover)
         # Local discovery must not expand v1's complete replacement set. Reading
         # the explicit scope separately also isolates failures in other sources.
@@ -120,6 +124,7 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Report local coverage separately from the actual configured wire scope."""
         local = self.update_inventory
         exported = self.export_update_inventory
+        projection = exported.as_protocol()
         selected_ids = {record.entity_id for record in exported.records}
         return {
             **local.summary(),
@@ -129,10 +134,14 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else "selected",
             "export_sources": len(exported.records),
             "export_known_available": len(exported.offered),
+            "export_item_count": len(projection["items"]),
+            "blocked_known_available": len(exported.offered)
+            if projection["status"] != "ok"
+            else 0,
             "not_exported": sum(
                 record.entity_id not in selected_ids for record in local.offered
             ),
-            "protocol_status": exported.as_protocol()["status"],
+            "protocol_status": projection["status"],
             "protocol_issues": exported.protocol_issues,
         }
 
