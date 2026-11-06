@@ -138,5 +138,5 @@ class MonitoringSensor(CoordinatorEntity[MonitoringCoordinator], SensorEntity):
         if self._key in METRIC_KEYS:
             result["scope"] = self._observation.get("scope")
         elif self._key == "available_updates":
-            result.update(self.coordinator.update_inventory.summary())
+            result.update(self.coordinator.update_summary())
         return result

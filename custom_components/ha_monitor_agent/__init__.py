@@ -54,3 +54,4 @@ async def async_remove_entry(hass: HomeAssistant, entry: AgentConfigEntry) -> No
 
     ir.async_delete_issue(hass, DOMAIN, f"upload_blocked_{entry.entry_id}")
     ir.async_delete_issue(hass, DOMAIN, f"monitoring_blocked_{entry.entry_id}")
+    ir.async_delete_issue(hass, DOMAIN, f"update_export_incomplete_{entry.entry_id}")

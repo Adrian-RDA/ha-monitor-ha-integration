@@ -29,6 +29,7 @@ from .const import (
     CONF_AGENT_TOKEN,
     CONF_DISCOVER_UPDATES,
     CONF_ENABLED,
+    CONF_EXPORT_ALL_UPDATES,
     CONF_EXPORT_METRICS,
     CONF_INSTANCE_ID,
     CONF_MONITORING_ENABLED,
@@ -64,6 +65,7 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self._resources = ResourceCollector(hass.config.config_dir)
         self.update_inventory = UpdateInventory("unknown")
+        self.export_update_inventory = UpdateInventory("unknown")
         self.uploader = MonitoringUploader(hass, entry, heartbeat)
         # Keep collection subscribed independently of optional local entities.
         self._unsubscribe = self.async_add_listener(self._async_observed)
@@ -79,24 +81,83 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             inventory = collect_inventory(self.hass)
         except Exception:
             inventory = {key: observation("unavailable") for key in INVENTORY_KEYS}
-        try:
-            self.update_inventory = collect_update_inventory(
-                self.hass,
-                self.entry.options.get(CONF_SYSTEM_UPDATES, True),
-                self.entry.options.get(CONF_UPDATE_ENTITIES, []),
-                discover=self.entry.options.get(CONF_DISCOVER_UPDATES, True),
-            )
-        except Exception:
-            self.update_inventory = UpdateInventory(
-                "unavailable", collection_issues=("collection_failed",)
-            )
+        discover = self.entry.options.get(CONF_DISCOVER_UPDATES, True)
+        self.update_inventory = self._collect_updates(discover=discover)
+        # Local discovery must not expand v1's complete replacement set. Reading
+        # the explicit scope separately also isolates failures in other sources.
+        if self.entry.options.get(CONF_EXPORT_ALL_UPDATES, False) or not discover:
+            self.export_update_inventory = self.update_inventory
+        else:
+            self.export_update_inventory = self._collect_updates(discover=False)
+        self._async_update_export_issue()
         return {
             "snapshot_id": str(uuid4()),
             "observed_at": dt_util.utcnow().isoformat(),
             "metrics": metrics,
             "inventory": inventory,
-            "updates": self.update_inventory.as_protocol(),
+            "updates": self.export_update_inventory.as_protocol(),
         }
+
+    @callback
+    def _collect_updates(self, *, discover: bool) -> UpdateInventory:
+        try:
+            return collect_update_inventory(
+                self.hass,
+                self.entry.options.get(CONF_SYSTEM_UPDATES, True),
+                self.entry.options.get(CONF_UPDATE_ENTITIES, []),
+                discover=discover,
+            )
+        except Exception:
+            return UpdateInventory(
+                "unavailable", collection_issues=("collection_failed",)
+            )
+
+    @property
+    def update_export_issue_id(self) -> str:
+        return f"update_export_incomplete_{self.entry.entry_id}"
+
+    def update_summary(self) -> dict[str, Any]:
+        """Report local coverage separately from the actual configured wire scope."""
+        local = self.update_inventory
+        exported = self.export_update_inventory
+        selected_ids = {record.entity_id for record in exported.records}
+        return {
+            **local.summary(),
+            "local_protocol_issues": local.protocol_issues,
+            "export_scope": "all"
+            if self.entry.options.get(CONF_EXPORT_ALL_UPDATES, False)
+            else "selected",
+            "export_sources": len(exported.records),
+            "export_known_available": len(exported.offered),
+            "not_exported": sum(
+                record.entity_id not in selected_ids for record in local.offered
+            ),
+            "protocol_status": exported.as_protocol()["status"],
+            "protocol_issues": exported.protocol_issues,
+        }
+
+    @callback
+    def _async_update_export_issue(self) -> None:
+        """Make real export limitations visible without logging source metadata."""
+        summary = self.update_summary()
+        if self.uploader.enabled and (
+            summary["not_exported"] or summary["protocol_issues"]
+        ):
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                self.update_export_issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="update_export_incomplete",
+                translation_placeholders={
+                    "omitted": str(summary["not_exported"]),
+                    "reason": ", ".join(sorted(summary["protocol_issues"]))
+                    or "selected_sources_only",
+                },
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, self.update_export_issue_id)
 
     @callback
     def _async_observed(self) -> None:

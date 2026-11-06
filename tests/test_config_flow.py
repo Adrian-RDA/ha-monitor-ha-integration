@@ -136,3 +136,17 @@ async def test_options_pause_reload(hass, backend, entry):
     assert entry.runtime_data.status == "paused"
     assert entry.runtime_data._task is None
     assert len(backend.requests) == 1
+
+
+async def test_existing_local_discovery_does_not_enable_all_source_transmission(
+    hass, backend, entry
+):
+    hass.config_entries.async_update_entry(entry, options={"discover_updates": True})
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"enabled": False}
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["discover_updates"] is True
+    assert entry.options["export_all_updates"] is False

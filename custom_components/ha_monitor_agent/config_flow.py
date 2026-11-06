@@ -33,6 +33,7 @@ from .client import (
 from .const import (
     CONF_DISCOVER_UPDATES,
     CONF_ENABLED,
+    CONF_EXPORT_ALL_UPDATES,
     CONF_EXPORT_METRICS,
     CONF_INSTANCE_ID,
     CONF_MONITORING_ENABLED,
@@ -192,6 +193,12 @@ class AgentOptionsFlow(OptionsFlowWithReload):
                         CONF_DISCOVER_UPDATES,
                         default=self.config_entry.options.get(
                             CONF_DISCOVER_UPDATES, True
+                        ),
+                    ): bool,
+                    probatio.Required(
+                        CONF_EXPORT_ALL_UPDATES,
+                        default=self.config_entry.options.get(
+                            CONF_EXPORT_ALL_UPDATES, False
                         ),
                     ): bool,
                     probatio.Required(

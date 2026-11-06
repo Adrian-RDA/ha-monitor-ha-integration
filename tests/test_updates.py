@@ -68,7 +68,7 @@ async def test_discovery_all_products_and_read_only_updates_reach_tls_backend(
                 "device_class": "firmware" if category == "firmware" else None,
             },
         )
-    monitor = await make_monitor(hass, backend, entry)
+    monitor = await make_monitor(hass, backend, entry, export_all_updates=True)
     assert [record.category for record in monitor.update_inventory.records].count(
         "firmware"
     ) == 2
@@ -153,7 +153,7 @@ async def test_raw_shelly_firmware_blocks_only_wire_projection_preserving_metada
             "release_url": backend.code,
         },
     )
-    monitor = await make_monitor(hass, backend, entry)
+    monitor = await make_monitor(hass, backend, entry, export_all_updates=True)
     inventory = monitor.update_inventory
     record = inventory.offered[0]
     assert inventory.status == "ok" and len(inventory.offered) == 1
@@ -345,7 +345,9 @@ async def test_local_count_and_coverage_remain_visible_when_v1_cannot_send_versi
         latest_version="20241011/v1.14.1",
         friendly_name=backend.token,
     )
-    hass.config_entries.async_update_entry(entry, options={"enabled": False})
+    hass.config_entries.async_update_entry(
+        entry, options={"enabled": False, "export_all_updates": True}
+    )
     assert await hass.config_entries.async_setup(entry.entry_id)
     monitor = entry.runtime_data.monitoring
     await monitor.async_refresh()
@@ -389,3 +391,179 @@ async def test_unrepresentable_metadata_never_turns_an_offered_update_into_zero(
     assert inventory.offered[0].supports_install is None
     assert inventory.protocol_issues == {error: 1}
     assert inventory.as_protocol() == {"status": "unavailable", "items": []}
+
+
+@pytest.fixture
+def supervisor_updates(hass):
+    """Real HA Supervisor cache/API and Core/OS registry identities."""
+    from aiohasupervisor.models import RootInfo
+    from homeassistant.components.hassio.const import DATA_INFO
+
+    hass.config.components.add("hassio")
+    hass.data[DATA_INFO] = RootInfo.from_dict(
+        {
+            "supervisor": "2026.11.0",
+            "homeassistant": "2026.11.0",
+            "hassos": "17.0",
+            "docker": "28.0.0",
+            "hostname": "test",
+            "operating_system": "Home Assistant OS 17.0",
+            "features": [],
+            "machine": "qemux86-64",
+            "machine_id": "test",
+            "arch": "amd64",
+            "state": "running",
+            "supported_arch": ["amd64"],
+            "supported": True,
+            "channel": "stable",
+            "logging": "info",
+            "timezone": "UTC",
+        }
+    )
+    registry = er.async_get(hass)
+    ids = []
+    for kind in ("core", "os"):
+        entity = registry.async_get_or_create(
+            "update", "hassio", f"home_assistant_{kind}_version_latest"
+        )
+        hass.states.async_set(
+            entity.entity_id,
+            "on",
+            {
+                "installed_version": "1.0",
+                "latest_version": "1.1",
+                "supported_features": 0,
+            },
+        )
+        ids.append(entity.entity_id)
+    return ids
+
+
+@pytest.mark.parametrize(
+    "bad_source", ["unavailable", "unknown", "raw_version", "registry_only"]
+)
+async def test_unselected_bad_source_cannot_erase_core_os_and_selected_updates(
+    hass, backend, entry, supervisor_updates, bad_source
+):
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ha_monitor_agent.const import DOMAIN
+
+    app = source(hass, "update.app", platform="hassio")
+    hacs = source(hass, "update.hacs", platform="hacs")
+    device = source(hass, "update.device", supported_features=0)
+    selected = [app.entity_id, hacs.entity_id, device.entity_id]
+    if bad_source == "raw_version":
+        bad = source(
+            hass,
+            "update.unselected",
+            installed_version="20260101/v1.0",
+            latest_version="20260201/v1.1",
+        )
+    else:
+        bad = source(
+            hass,
+            "update.unselected",
+            state=bad_source if bad_source != "registry_only" else "on",
+        )
+        if bad_source == "registry_only":
+            hass.states.async_remove(bad.entity_id)
+    # Legacy discovery preference must NOT opt existing users into strict export.
+    monitor = await make_monitor(
+        hass, backend, entry, discover_updates=True, update_entities=selected
+    )
+    await monitor.uploader.async_send_once()
+    sent = backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]
+    assert sent["status"] == "ok"
+    assert {item["key"] for item in sent["items"]} == set(supervisor_updates + selected)
+    assert [item["kind"] for item in sent["items"][:2]] == ["core", "os"]
+    assert bad.entity_id in {
+        record.entity_id for record in monitor.update_inventory.records
+    }
+    summary = monitor.update_summary()
+    assert summary["export_scope"] == "selected" and summary["protocol_status"] == "ok"
+    assert summary["protocol_issues"] == {} and summary["local_protocol_issues"]
+    if bad_source == "raw_version":
+        assert summary["not_exported"] == 1
+        assert ir.async_get(hass).async_get_issue(
+            DOMAIN, monitor.update_export_issue_id
+        )
+    assert monitor.uploader.status == "online"
+
+
+async def test_strict_all_export_requires_new_explicit_option(
+    hass, backend, entry, supervisor_updates
+):
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ha_monitor_agent.const import DOMAIN
+
+    bad = source(hass, "update.offline", state="unavailable")
+    monitor = await make_monitor(
+        hass, backend, entry, discover_updates=True, export_all_updates=True
+    )
+    await monitor.uploader.async_send_once()
+    assert backend.monitoring_requests[-1][0]["snapshots"][0]["updates"] == {
+        "status": "unavailable",
+        "items": [],
+    }
+    assert monitor.update_summary()["protocol_issues"] == {"source_unavailable": 1}
+    assert ir.async_get(hass).async_get_issue(DOMAIN, monitor.update_export_issue_id)
+    hass.states.async_set(
+        bad.entity_id, "off", {"installed_version": "1", "latest_version": "1"}
+    )
+    await monitor.async_refresh()
+    assert monitor.data["updates"]["status"] == "ok"
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, monitor.update_export_issue_id)
+        is None
+    )
+
+
+async def test_explicit_source_failure_still_invalidates_complete_selected_scope(
+    hass, backend, entry, supervisor_updates
+):
+    bad = source(hass, "update.required", state="unavailable")
+    monitor = await make_monitor(hass, backend, entry, update_entities=[bad.entity_id])
+    assert monitor.data["updates"] == {"status": "unavailable", "items": []}
+    assert monitor.update_summary()["protocol_issues"] == {"source_unavailable": 1}
+
+
+async def test_discovery_exception_is_isolated_from_explicit_export(
+    hass, backend, entry, supervisor_updates
+):
+    real_collect = collect_update_inventory
+
+    def collect(hass, system_updates, selected, *, discover):
+        if discover:
+            raise RuntimeError(backend.token)
+        return real_collect(hass, system_updates, selected, discover=False)
+
+    with patch(
+        "custom_components.ha_monitor_agent.monitoring.collect_update_inventory",
+        side_effect=collect,
+    ):
+        monitor = await make_monitor(hass, backend, entry)
+    assert monitor.update_inventory.status == "unavailable"
+    await monitor.uploader.async_send_once()
+    sent = backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]
+    assert sent["status"] == "ok" and {item["key"] for item in sent["items"]} == set(
+        supervisor_updates
+    )
+    assert backend.token not in json.dumps(monitor.update_summary())
+
+
+async def test_remove_cleans_update_export_repair(hass, backend, entry):
+    from homeassistant.helpers import issue_registry as ir
+
+    from custom_components.ha_monitor_agent.const import DOMAIN
+
+    source(hass, "update.unselected")
+    hass.config_entries.async_update_entry(entry, options={"monitoring_enabled": True})
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    monitor = entry.runtime_data.monitoring
+    await monitor.async_refresh()
+    issue_id = monitor.update_export_issue_id
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
