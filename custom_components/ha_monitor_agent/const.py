@@ -1,7 +1,7 @@
 """Constants for HA Monitor's outbound agent."""
 
 DOMAIN = "ha_monitor_agent"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 CONF_SERVER_URL = "server_url"
 CONF_PAIRING_CODE = "pairing_code"
 CONF_AGENT_TOKEN = "agent_token"
@@ -19,3 +19,11 @@ MAX_RESPONSE_BYTES = 65_536
 BACKOFF_BASE = 5
 BACKOFF_CAP = 900
 MAX_RETRY_AFTER = 86_400
+
+CONF_MONITORING_ENABLED = "monitoring_enabled"
+CONF_EXPORT_METRICS = "export_metrics"
+CONF_SYSTEM_UPDATES = "system_updates"
+CONF_UPDATE_ENTITIES = "update_entities"
+MONITORING_INTERVAL = 60
+METRIC_KEYS = ("cpu_percent", "memory_percent", "storage_percent")
+INVENTORY_KEYS = ("entities", "devices", "automations", "scenes", "integrations")

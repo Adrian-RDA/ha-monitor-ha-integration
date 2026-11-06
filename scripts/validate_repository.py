@@ -30,7 +30,7 @@ def validate() -> None:
     assert manifest["domain"] == DOMAIN
     assert manifest["config_flow"] is True
     assert manifest["integration_type"] == "service"
-    assert manifest["requirements"] == []
+    assert manifest["requirements"] == ["psutil>=7.2.2"]
     assert manifest["codeowners"] == ["@Adrian-RDA"]
     assert (
         manifest["documentation"]

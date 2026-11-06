@@ -1,102 +1,38 @@
-# Home Assistant Custom Integration - Design and Distribution
+# Home Assistant Custom Integration – Sprint 5 architecture
 
-Status: Sprint 3 heartbeat integration implemented in this repository. See `README.md` for installation, supported versions, behavior and validation. The following is the original design brief; future data exports remain out of scope for protocol v1.
+Status: implemented in version **0.2.0**. [README](../README.md) describes installation, configuration, scope semantics and operational limits. [PROTOCOL.md](PROTOCOL.md) remains the authoritative Laravel contract. This repository contains only the HA integration; no Laravel or infrastructure changes belong here.
 
-The Laravel-side Sprint 2 receiver is now implemented; Python development follows in a separate repository using the heartbeat-only v1 contract in PROTOCOL.md. Distribution through HACS requires a public repository; a custom repository is not the same as a private repository. Repository publication and installation will be decided for that milestone.
+## Local collection
 
-## Purpose
+`collectors.py` collects OS-visible CPU/RAM and the HA data filesystem with psutil, registry/state inventory totals, and explicitly configured update sources. No System Monitor, HACS or additional sensor integration is required for resources or totals. All filesystem and OS work runs in HA's executor. CPU uses two aggregate OS counter readings, excluding double-counted guest time and treating I/O wait as idle; a first/invalid interval is unknown. Memory uses total minus available; storage uses used divided by total. Host, container consumption and HA-process consumption are never substituted for each other. Current resources use only the protocol scopes `host` (visible OS) and `data` (HA data filesystem); there is no process or cgroup-consumption metric in this version.
 
-Build a proper Home Assistant custom integration, installable through a HACS-compatible repository or the Home Assistant Marketplace, to act as a lightweight outbound data agent for HA Monitor.
+Entity/device registries include disabled entries. Automation/scene totals count currently present domain states. Integration totals deduplicate successfully loaded component domains, including YAML setups. Inventory and updates stay unknown until HA has finished startup.
 
-The integration gathers **selected, permitted monitoring data** from its local Home Assistant instance and sends it to the Laravel server. It does not require exposing the Home Assistant API or storing an HA administrator's Long-Lived Access Token in Laravel.
+Core/OS update sources use the Supervisor integration's public cached information and stable entity-registry unique IDs. `after_dependencies: [hassio]` arranges ordering when Supervisor is present without requiring it on Container/Core installations. Additional sources are explicitly selected `update.*` entities. Native update availability, including skipped versions, is used instead of ordering arbitrary version strings. There is no separate external version lookup on Container/Core. A missing, failed or invalid source makes the entire configured update collection unavailable. Unsupported OS sources are never fabricated. Names are fixed product names or selected entity IDs, avoiding private friendly names and arbitrary attributes.
 
-## Repository and packaging
+## Shared state and optional entities
 
-Use an independent repository (proposed `ha-monitor-ha-integration`), with a standard layout:
+`MonitoringCoordinator` in `monitoring.py` uses HA's `DataUpdateCoordinator` and a permanent subscription to collect every 60 seconds even with all monitoring entities disabled. It holds one common observation for local sensors and subsequent export. Each cycle creates a fresh UUID and UTC timestamp; per-collector failures produce explicit statuses/nulls instead of stale values or fabricated zeroes. Optional diagnostic sensors default to disabled and read this common state without I/O.
 
-```text
-ha-monitor-ha-integration/
-  custom_components/
-    ha_monitor_agent/
-      __init__.py
-      manifest.json
-      config_flow.py
-      const.py
-      coordinator.py        # only if justified
-      client.py
-      translations/
-        en.json
-        de.json             # when translated
-  hacs.json
-  README.md
-  .github/workflows/      # HACS/Marketplace and hassfest checks
-  tests/
-```
+Monitoring upload is opt-in. Options select the exported resources, Supervisor Core/OS sources and additional update entities. Disabling transmission preserves collection. Disabling/unloading the integration stops its collection as part of the normal HA lifecycle.
 
-This is a **proposed file layout**, not files currently present. Add files only where needed. HACS and the Marketplace require the integration code under `custom_components/<domain>/`; include a correctly versioned manifest and root `hacs.json`. For initial private deployment use a custom repository; catalog listing and public publication are separate decisions.
+## Independent transport
 
-## Installation experience
+The existing `HeartbeatSender` remains the config entry runtime object; its `monitoring` member owns the coordinator and a separate `MonitoringUploader`. Heartbeats continue through `/ingest` with their frozen event schema. Monitoring uses `/monitoring` with complete Snapshot v1 observations and its own scheduling/backoff. Both reuse the verified HA session and token; redirects with credentials are forbidden. Initial credential failure leaves the entry loaded for local collection and starts reauthentication.
 
-1. Operator installs the repository through HACS (older HA) or Marketplace (HA 2026.11+) where supported.
-2. Adds "HA Monitor" using **Settings > Devices & Services > Add Integration** via a config flow.
-3. Enters the HTTPS monitoring server URL and short-lived pairing code created in Laravel.
-4. Integration checks enrollment, stores the issued per-instance credential in its HA config entry, and reports success/failure.
-5. Config and reauthentication flows allow reconnecting to a replacement receiver or rotating an invalid credential.
-6. Options flow controls which _optional_ data categories/entities may be exported. Make defaults privacy-preserving.
+There is at most one monitoring request in flight and two retained serialized observations: an immutable pending snapshot and the latest coalesced snapshot. New observations cannot mutate retries. After recovery, the latest observation follows the pending one. Requests contain one full snapshot, bounded at 65,536 actual bytes including the envelope. Oversized update state becomes explicitly unavailable rather than a silently truncated list. Monitoring uses at most four requests/minute, leaving quota for the existing heartbeat backlog (20/minute). Retries use capped exponential backoff/jitter and respect valid Retry-After values. Observations older than 23 hours or in the future after clock rollback are discarded. There is no persistent retry queue or lossless history guarantee.
 
-No YAML-only installation should be required for the MVP. Do not build a large UI inside Home Assistant; its main purpose is pairing and sender configuration.
+Monitoring 404/409 or another permanent rejection stops monitoring with a Repairs issue; local collection and heartbeats continue. A credential rejection stops both outbound paths and starts reauthentication. Snapshot success never changes heartbeat/liveness timestamps. Entry-scoped tasks, subscriptions and timers are cancelled on unload. Diagnostics expose only allowlisted counts/statuses/times, never tokens, pairing codes, server URLs or raw source metadata.
 
-## Runtime behavior
+## Validation and references
 
-- Use Home Assistant's async integration lifecycle (`async_setup_entry`, `async_unload_entry`) and config entries; cancel subscriptions/tasks on unload.
-- For outgoing HTTP, use Home Assistant's shared async HTTP client/session helpers; do not perform blocking `requests` calls in the event loop.
-- Start with v1 heartbeat, HA version and integration version only; inventory, snapshots and entity state export require a later explicitly versioned contract.
-- For entity changes, use supported state-change helpers instead of scanning every entity continuously.
-- Coalesce frequent updates and send bounded batches. Never create an unbounded per-change task or queue.
-- Apply sensible timeouts, exponential backoff with jitter and a capped buffer. Avoid excessive CPU, memory or network traffic.
-- Do not copy all HA entity attributes indiscriminately: they may contain sensitive URLs, identifiers, presence/location, alarm status, and other personal details.
-- Preserve a reliable way to generate a fresh snapshot after connectivity returns or the integration restarts.
-- Track integration version to aid compatibility checks with Laravel receiver API version.
+Tests use real HA entries, registries, coordinators, entity platforms and flows with simulated OS/Supervisor data and a strict TLS backend. Run the commands in README, including official hassfest. Physical HA OS/Container/Core acceptance against real hardware remains an operator test; the automated tests do not claim hardware coverage.
 
-## Minimum exported data (MVP proposal)
+- [Async in HA](https://contributors.home-assistant.io/core/internals/asyncio/)
+- [Fetching data / DataUpdateCoordinator](https://contributors.home-assistant.io/core/integrations/fetching-data/)
+- [HA entity registry](https://contributors.home-assistant.io/core/integrations/entity-registry/)
+- [System Monitor reference implementation](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/systemmonitor/coordinator.py)
+- [Supervisor update identities](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/hassio/entity.py)
+- [psutil BSD-3-Clause license](https://github.com/giampaolo/psutil/blob/master/LICENSE)
 
-- Instance identity issued by the backend during pairing.
-- Last-contact/heartbeat timestamp and integration version.
-- HA core version and small optional technical counters where available through supported APIs.
-- A small selected entity-state subset only after the user has approved collection rules.
-
-Do not promise CPU/RAM/system metrics without checking whether the HA installation actually exposes them. Define those sources separately, rather than scraping unstable internals.
-
-## Failure handling
-
-| Condition                | Required behavior                                                                        |
-| ------------------------ | ---------------------------------------------------------------------------------------- |
-| Central receiver offline | Log a concise, rate-limited warning; retry later; HA stays usable                        |
-| Timeout / 5xx            | Bounded backoff; no busy loop                                                            |
-| 429                      | Respect Retry-After when valid; delay batch                                              |
-| 400 / 413                | Do not retry invalid payload endlessly; surface diagnostics and shrink/split as designed |
-| 401 / 403                | Stop useless retries; request reauthentication / re-pairing                              |
-| HA restart               | Resume fresh v1 heartbeats; snapshot reconciliation requires a later protocol extension  |
-| Credentials rotated      | Reauthentication flow; never print credentials                                           |
-
-The initial implementation may lose individual transitions during a long offline period if it uses only memory. Document this honestly; a disk-backed queue is a **later requirement only if lossless history is actually needed**.
-
-## HACS / Marketplace release checklist
-
-- Ensure one integration under `custom_components/` and valid `manifest.json` with `domain`, `name`, `version`, `documentation`, `issue_tracker`, `codeowners`, `config_flow` as applicable.
-- Provide `hacs.json`, a concise README, a public repository if publication is chosen, and versioned releases.
-- Run Home Assistant `hassfest` and the HACS validation action before tagging releases.
-- Test installation and upgrade from a custom repository, config flow, reauthentication, unload/reload, HA restart, and receiver downtime.
-- Target the minimum HA version explicitly and test on supported versions; do not assume every new HA version remains compatible.
-
-## Current HACS transition
-
-Home Assistant 2026.11 integrates HACS functionality as **Marketplace**. Its publisher model still uses HACS's repository layout, `hacs.json`, catalog and validation tools; earlier Home Assistant versions retain the HACS custom integration. Design for both rather than tying the product to a UI label.
-
-## Primary technical references
-
-- HA custom integration manifest: https://contributors.home-assistant.io/core/integrations/manifest/
-- HA config flows: https://contributors.home-assistant.io/core/integrations/config_flow/
-- HA event helpers: https://contributors.home-assistant.io/core/integrations/events/
-- HA Marketplace publishing: https://contributors.home-assistant.io/marketplace/guides/integrations/
-- HA Marketplace repository validation: https://contributors.home-assistant.io/marketplace/reference/validation/
+No HA source was copied or vendored. HACS/Marketplace publication, remote infrastructure changes and Git commits require a separate user request.

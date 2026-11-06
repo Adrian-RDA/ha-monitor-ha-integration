@@ -262,9 +262,10 @@ async def test_invalid_ack_is_not_removed(hass, backend, entry):
 
 async def test_setup_auth_failure_starts_reauth(hass, backend, entry):
     backend.revoked = True
-    assert not await hass.config_entries.async_setup(entry.entry_id)
+    assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.monitoring is not None
     flows = hass.config_entries.flow.async_progress()
     assert any(flow["step_id"] == "reauth_confirm" for flow in flows)
     assert len(backend.requests) == 1

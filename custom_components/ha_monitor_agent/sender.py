@@ -43,6 +43,7 @@ from .const import (
 
 if TYPE_CHECKING:
     from . import AgentConfigEntry
+    from .monitoring import MonitoringCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 STATUSES = ["online", "retrying", "reauth_required", "blocked", "paused"]
@@ -70,6 +71,7 @@ class HeartbeatSender:
         self._task: asyncio.Task[None] | None = None
         self._stopped = False
         self._delay = float(entry.data[CONF_HEARTBEAT_INTERVAL])
+        self.monitoring: MonitoringCoordinator | None = None
 
     @property
     def pending_events(self) -> int:
@@ -113,6 +115,8 @@ class HeartbeatSender:
     async def async_stop(self) -> None:
         """Cancel and await any in-flight request before returning from unload."""
         self._stopped = True
+        if self.monitoring is not None:
+            await self.monitoring.async_stop()
         self.next_attempt = None
         if self._task is not None:
             self._task.cancel()
@@ -175,15 +179,19 @@ class HeartbeatSender:
                 break
             events.append(event)
             body = candidate
-        if not events:
+        if not events and self._queue:
             raise ProtocolError("payload_too_large")
         return body, events
 
     async def async_send_once(self, *, initial: bool = False) -> None:
         """Transmit or record a safe failure; never acknowledge missing events."""
+        if self._stopped or self.status == "reauth_required":
+            return
         now = dt_util.utcnow()
         try:
             body, events = self._prepare_batch(now)
+            if not events:
+                return
             received_at = await self.client.async_ingest(
                 body, self.entry.data[CONF_AGENT_TOKEN], len(events)
             )
@@ -199,6 +207,8 @@ class HeartbeatSender:
             self.entry.async_start_reauth(self.hass)
             return
         except ProtocolError as err:
+            if self.status == "reauth_required":
+                return
             self.status = "blocked"
             self.last_error = str(err)
             self.next_attempt = None
@@ -215,6 +225,8 @@ class HeartbeatSender:
             self._async_notify()
             return
         except TransportError as err:
+            if self.status == "reauth_required":
+                return
             self.failures += 1
             # Equal jitter, bounded exponent and delay; Retry-After is a floor.
             backoff = min(BACKOFF_CAP, BACKOFF_BASE * 2 ** min(self.failures - 1, 10))
@@ -226,6 +238,9 @@ class HeartbeatSender:
             self.status = "retrying"
             self.last_error = str(err)
         else:
+            # A concurrent monitoring 401 has authority over this older request.
+            if self.status == "reauth_required":
+                return
             ir.async_delete_issue(self.hass, DOMAIN, self.issue_id)
             for _ in events:
                 self._queue.popleft()
@@ -241,4 +256,13 @@ class HeartbeatSender:
             # At most 20 requests/min while draining a split backlog.
             self._delay = 3 if self._queue else self.entry.data[CONF_HEARTBEAT_INTERVAL]
         self.next_attempt = dt_util.utcnow() + timedelta(seconds=self._delay)
+        self._async_notify()
+
+    @callback
+    def async_auth_failed(self) -> None:
+        """Stop both upload paths while keeping local collection alive."""
+        self.status = "reauth_required"
+        self.last_error = "invalid_auth"
+        self.next_attempt = None
+        self.entry.async_start_reauth(self.hass)
         self._async_notify()

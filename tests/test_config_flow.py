@@ -132,7 +132,7 @@ async def test_options_pause_reload(hass, backend, entry):
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options == {"enabled": False}
+    assert entry.options["enabled"] is False
     assert entry.runtime_data.status == "paused"
     assert entry.runtime_data._task is None
     assert len(backend.requests) == 1

@@ -100,7 +100,9 @@ class Pairing:
 
 def encode_payload(payload: dict[str, Any]) -> bytes:
     """Use the exact same encoding for size checks and transport."""
-    return json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode()
+    return json.dumps(
+        payload, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode()
 
 
 def _retry_after(value: str | None) -> float | None:
@@ -164,7 +166,16 @@ class AgentClient:
 
     async def async_ingest(self, body: bytes, token: str, count: int) -> datetime:
         """Only acknowledge a complete, valid, durably committed batch."""
-        data = await self._async_post("ingest", body, token)
+        return await self._async_acknowledge("ingest", body, token, count)
+
+    async def async_monitoring(self, body: bytes, token: str, count: int) -> datetime:
+        """Send complete Monitoring Snapshot v1 observations separately."""
+        return await self._async_acknowledge("monitoring", body, token, count)
+
+    async def _async_acknowledge(
+        self, endpoint: str, body: bytes, token: str, count: int
+    ) -> datetime:
+        data = await self._async_post(endpoint, body, token)
         accepted, duplicates = data.get("accepted"), data.get("duplicates")
         if (
             type(accepted) is not int

@@ -3,10 +3,12 @@
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .client import AgentClient
 from .const import CONF_SERVER_URL, DOMAIN
+from .monitoring import MonitoringCoordinator
 from .sender import HeartbeatSender
 
 type AgentConfigEntry = ConfigEntry[HeartbeatSender]
@@ -22,9 +24,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: AgentConfigEntry) -> boo
         AgentClient(async_get_clientsession(hass), entry.data[CONF_SERVER_URL]),
     )
     entry.runtime_data = sender
-    await sender.async_setup()
+    sender.monitoring = MonitoringCoordinator(hass, entry, sender)
+    # Neither local I/O nor the receiver's initial response gates the other task.
+    entry.async_create_background_task(
+        hass, sender.monitoring.async_refresh(), "HA Monitor initial collection"
+    )
+    # Local collection must also work with a revoked/unreachable credential.
+    try:
+        await sender.async_setup()
+    except ConfigEntryAuthFailed:
+        sender.async_auth_failed()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     sender.async_start()
+    sender.monitoring.uploader.async_start()
     # Boolean lifecycle results also support HA 2026.10 (HACS).
     return True
 
@@ -41,3 +53,4 @@ async def async_remove_entry(hass: HomeAssistant, entry: AgentConfigEntry) -> No
     from homeassistant.helpers import issue_registry as ir
 
     ir.async_delete_issue(hass, DOMAIN, f"upload_blocked_{entry.entry_id}")
+    ir.async_delete_issue(hass, DOMAIN, f"monitoring_blocked_{entry.entry_id}")

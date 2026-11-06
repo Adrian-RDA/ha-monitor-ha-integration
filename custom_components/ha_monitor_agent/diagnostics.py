@@ -13,7 +13,7 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: AgentConfigEntry
 ) -> dict[str, Any]:
     sender = entry.runtime_data
-    return {
+    result = {
         "integration_version": VERSION,
         "ha_version": HA_VERSION,
         "enabled": entry.options.get(CONF_ENABLED, True),
@@ -27,3 +27,13 @@ async def async_get_config_entry_diagnostics(
         "last_heartbeat": sender.last_heartbeat,
         "next_attempt": sender.next_attempt,
     }
+    if sender.monitoring is not None:
+        uploader = sender.monitoring.uploader
+        result["monitoring"] = {
+            "status": uploader.status,
+            "last_error": uploader.last_error,
+            "pending_snapshots": uploader.pending_snapshots,
+            "dropped_snapshots": uploader.dropped_snapshots,
+            "last_upload": uploader.last_upload,
+        }
+    return result

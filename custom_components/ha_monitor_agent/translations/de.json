@@ -5,17 +5,26 @@
       "user": {
         "title": "HA Monitor verbinden",
         "description": "HTTPS-Basisadresse des Laravel-Servers und einen neuen Kopplungscode aus dessen Instanzseite eingeben. Codes sind zehn Minuten gültig und einmal verwendbar. Geht die Antwort verloren, vor dem nächsten Versuch einen neuen Code erstellen.",
-        "data": {"server_url": "HTTPS-Serveradresse", "pairing_code": "Kopplungscode"}
+        "data": {
+          "server_url": "HTTPS-Serveradresse",
+          "pairing_code": "Kopplungscode"
+        }
       },
       "reauth_confirm": {
         "title": "HA Monitor erneut verbinden",
         "description": "Das Agent-Token wurde widerrufen oder ist ungültig. In Laravel einen neuen Kopplungscode für dieselbe Instanz erstellen und hier eingeben. Das Erstellen eines Codes widerruft sofort das vorherige Token.",
-        "data": {"server_url": "HTTPS-Serveradresse", "pairing_code": "Neuer Kopplungscode"}
+        "data": {
+          "server_url": "HTTPS-Serveradresse",
+          "pairing_code": "Neuer Kopplungscode"
+        }
       },
       "reconfigure": {
         "title": "Empfänger ändern oder erneut koppeln",
         "description": "Empfängeradresse und einen neuen Kopplungscode für dieselbe Instanz-UUID eingeben. Für eine andere Instanz eine separate Integration hinzufügen. Der Code wird auch bei einer abweichenden Instanz verbraucht.",
-        "data": {"server_url": "HTTPS-Serveradresse", "pairing_code": "Neuer Kopplungscode"}
+        "data": {
+          "server_url": "HTTPS-Serveradresse",
+          "pairing_code": "Neuer Kopplungscode"
+        }
       }
     },
     "error": {
@@ -38,9 +47,15 @@
   "options": {
     "step": {
       "init": {
-        "title": "Heartbeat-Übertragung",
-        "description": "Übertragen werden ausschließlich Instanzkennung, Heartbeat-Zeitpunkte, Home-Assistant-Version und Integrationsversion. Das Intervall gibt der Empfänger vor (normalerweise 60 Sekunden). Beim Pausieren wird der Status beim Empfänger veraltet. Änderungen laden die Integration neu und verwerfen den Wiederholungspuffer im Arbeitsspeicher.",
-        "data": {"enabled": "Heartbeat-Übertragung aktivieren"}
+        "title": "Monitoring und Übertragung",
+        "description": "Lokale Erfassung läuft alle 60 Sekunden unabhängig vom Server. Monitoring-Übertragung ist zunächst aus. Bei Aktivierung werden ausgewählte Ressourcen, Inventarsummen und Update-Quellen gesendet. CPU/RAM beschreiben die sichtbare Betriebssystemumgebung, keine Container- oder HA-Prozessauslastung. Supervisor Core/OS werden anhand der Registry erkannt. Weitere Update-Entitäten ausdrücklich auswählen (höchstens 100 Quellen). Pausieren stoppt beide Uploads; lokale Erfassung läuft weiter. Änderungen laden die Integration neu und verwerfen den Wiederholungspuffer.",
+        "data": {
+          "enabled": "Übertragung aktivieren",
+          "monitoring_enabled": "Monitoring-Snapshots übertragen",
+          "export_metrics": "Ressourcen zur Übertragung",
+          "system_updates": "Supervisor Core-/OS-Updates erfassen",
+          "update_entities": "Weitere Update-Entitäten"
+        }
       }
     }
   },
@@ -48,19 +63,71 @@
     "sensor": {
       "status": {
         "name": "Übertragungsstatus",
-        "state": {"online": "Online", "retrying": "Erneuter Versuch", "reauth_required": "Authentifizierung erforderlich", "blocked": "Übertragung gestoppt", "paused": "Pausiert"}
+        "state": {
+          "online": "Online",
+          "retrying": "Erneuter Versuch",
+          "reauth_required": "Authentifizierung erforderlich",
+          "blocked": "Übertragung gestoppt",
+          "paused": "Pausiert"
+        }
       },
-      "last_heartbeat": {"name": "Letzter bestätigter Heartbeat"},
-      "pending_events": {"name": "Ausstehende Heartbeats"}
+      "last_heartbeat": {
+        "name": "Letzter bestätigter Heartbeat"
+      },
+      "pending_events": {
+        "name": "Ausstehende Heartbeats"
+      },
+      "cpu_percent": {
+        "name": "CPU-Auslastung (OS-Sicht)"
+      },
+      "memory_percent": {
+        "name": "RAM-Auslastung (OS-Sicht)"
+      },
+      "storage_percent": {
+        "name": "HA-Datenpartition belegt"
+      },
+      "entities": {
+        "name": "Entitäten"
+      },
+      "devices": {
+        "name": "Geräte"
+      },
+      "automations": {
+        "name": "Automationen"
+      },
+      "scenes": {
+        "name": "Szenen"
+      },
+      "integrations": {
+        "name": "Integrationen"
+      },
+      "available_updates": {
+        "name": "Verfügbare Updates"
+      }
     }
   },
   "exceptions": {
-    "invalid_auth": {"message": "Das Agent-Token von HA Monitor ist ungültig oder widerrufen. Diese Instanz mit einem neuen Code erneut koppeln."}
+    "invalid_auth": {
+      "message": "Das Agent-Token von HA Monitor ist ungültig oder widerrufen. Diese Instanz mit einem neuen Code erneut koppeln."
+    }
   },
   "issues": {
     "upload_blocked": {
       "title": "HA-Monitor-Übertragung wurde gestoppt",
       "description": "Der Empfänger oder die lokalen Daten haben eine dauerhafte Prüfung nicht bestanden: {reason}. Unveränderte Uploads werden nicht wiederholt. Protokoll-v1-Kompatibilität, Instanz-UUID, HTTPS-Ingress, Zertifikatskette und Systemuhren prüfen. Bei HTTP 400/413/415/422 die Kompatibilität von Empfänger und Daten korrigieren; bei 403 Ingress oder Instanzkonfiguration korrigieren. Danach die Integration neu laden. Bei geänderter Empfängeradresse oder Zugangsdaten über Neu konfigurieren einen neuen Kopplungscode eingeben. Die TLS-Zertifikatsprüfung lässt sich nicht deaktivieren."
+    },
+    "monitoring_blocked": {
+      "title": "HA Monitor: Monitoring-Upload gestoppt",
+      "description": "Monitoring Snapshot v1 wurde abgelehnt: {reason}. Bei HTTP 404 fehlt der Monitoring-Empfänger, bei 409 wurde eine Snapshot-ID mit verändertem Inhalt verwendet. Kompatibilität, HTTPS und Uhrzeit prüfen und danach neu laden. Lokale Erfassung und Heartbeats laufen unabhängig weiter."
+    }
+  },
+  "selector": {
+    "metrics": {
+      "options": {
+        "cpu_percent": "CPU-Auslastung (OS-Sicht)",
+        "memory_percent": "RAM-Auslastung (OS-Sicht)",
+        "storage_percent": "HA-Datenpartition belegt"
+      }
     }
   }
 }

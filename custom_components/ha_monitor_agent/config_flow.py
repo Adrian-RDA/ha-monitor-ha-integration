@@ -13,6 +13,10 @@ from homeassistant.config_entries import (
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
+    SelectSelector,
+    SelectSelectorConfig,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
@@ -28,10 +32,15 @@ from .client import (
 )
 from .const import (
     CONF_ENABLED,
+    CONF_EXPORT_METRICS,
     CONF_INSTANCE_ID,
+    CONF_MONITORING_ENABLED,
     CONF_PAIRING_CODE,
     CONF_SERVER_URL,
+    CONF_SYSTEM_UPDATES,
+    CONF_UPDATE_ENTITIES,
     DOMAIN,
+    METRIC_KEYS,
 )
 
 
@@ -139,7 +148,7 @@ class AgentConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class AgentOptionsFlow(OptionsFlowWithReload):
-    """Heartbeat is the only export category in protocol v1."""
+    """Explicit monitoring consent, metric allowlist and selected update sources."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -153,7 +162,37 @@ class AgentOptionsFlow(OptionsFlowWithReload):
                     probatio.Required(
                         CONF_ENABLED,
                         default=self.config_entry.options.get(CONF_ENABLED, True),
-                    ): bool
+                    ): bool,
+                    probatio.Required(
+                        CONF_MONITORING_ENABLED,
+                        default=self.config_entry.options.get(
+                            CONF_MONITORING_ENABLED, False
+                        ),
+                    ): bool,
+                    probatio.Required(
+                        CONF_EXPORT_METRICS,
+                        default=self.config_entry.options.get(
+                            CONF_EXPORT_METRICS, list(METRIC_KEYS)
+                        ),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=list(METRIC_KEYS),
+                            multiple=True,
+                            translation_key="metrics",
+                        )
+                    ),
+                    probatio.Required(
+                        CONF_SYSTEM_UPDATES,
+                        default=self.config_entry.options.get(
+                            CONF_SYSTEM_UPDATES, True
+                        ),
+                    ): bool,
+                    probatio.Required(
+                        CONF_UPDATE_ENTITIES,
+                        default=self.config_entry.options.get(CONF_UPDATE_ENTITIES, []),
+                    ): EntitySelector(
+                        EntitySelectorConfig(domain="update", multiple=True)
+                    ),
                 }
             ),
         )

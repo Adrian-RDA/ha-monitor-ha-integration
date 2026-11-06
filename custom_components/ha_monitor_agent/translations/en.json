@@ -5,17 +5,26 @@
       "user": {
         "title": "Connect HA Monitor",
         "description": "Enter the HTTPS base URL of your Laravel server and a new pairing code from its instance page. Codes expire after ten minutes and can be used once. If a response is lost, create a new code before trying again.",
-        "data": {"server_url": "HTTPS server URL", "pairing_code": "Pairing code"}
+        "data": {
+          "server_url": "HTTPS server URL",
+          "pairing_code": "Pairing code"
+        }
       },
       "reauth_confirm": {
         "title": "Reconnect HA Monitor",
         "description": "The agent token was revoked or is invalid. Create a new pairing code for the same instance in Laravel, then enter it here. Issuing a code immediately invalidates the previous token.",
-        "data": {"server_url": "HTTPS server URL", "pairing_code": "New pairing code"}
+        "data": {
+          "server_url": "HTTPS server URL",
+          "pairing_code": "New pairing code"
+        }
       },
       "reconfigure": {
         "title": "Change receiver or pair again",
         "description": "Enter the receiver URL and a new pairing code for the same instance UUID. To connect a different instance, add a separate integration. Pairing consumes the code even if its instance does not match.",
-        "data": {"server_url": "HTTPS server URL", "pairing_code": "New pairing code"}
+        "data": {
+          "server_url": "HTTPS server URL",
+          "pairing_code": "New pairing code"
+        }
       }
     },
     "error": {
@@ -38,9 +47,15 @@
   "options": {
     "step": {
       "init": {
-        "title": "Heartbeat transmission",
-        "description": "Send only instance identity, heartbeat timestamps, Home Assistant version and integration version. The interval is supplied by the receiver (normally 60 seconds). Pausing makes the receiver's status become stale. Changes reload the integration and discard the in-memory retry buffer.",
-        "data": {"enabled": "Enable heartbeat transmission"}
+        "title": "Monitoring and transmission",
+        "description": "Local collection runs every 60 seconds independently of the server. Monitoring transmission is initially off. Enabling it sends selected resources, inventory totals and update sources. CPU/RAM describe the visible operating system, not container or HA process usage. Supervisor Core/OS sources are identified through the registry. Explicitly select other update entities (at most 100 sources). Pausing stops both uploads; local collection continues. Changes reload the integration and discard retry buffers.",
+        "data": {
+          "enabled": "Enable transmission",
+          "monitoring_enabled": "Transmit monitoring snapshots",
+          "export_metrics": "Resources to transmit",
+          "system_updates": "Collect Supervisor Core/OS updates",
+          "update_entities": "Additional update entities"
+        }
       }
     }
   },
@@ -48,19 +63,71 @@
     "sensor": {
       "status": {
         "name": "Upload status",
-        "state": {"online": "Online", "retrying": "Retrying", "reauth_required": "Authentication required", "blocked": "Upload stopped", "paused": "Paused"}
+        "state": {
+          "online": "Online",
+          "retrying": "Retrying",
+          "reauth_required": "Authentication required",
+          "blocked": "Upload stopped",
+          "paused": "Paused"
+        }
       },
-      "last_heartbeat": {"name": "Last acknowledged heartbeat"},
-      "pending_events": {"name": "Pending heartbeats"}
+      "last_heartbeat": {
+        "name": "Last acknowledged heartbeat"
+      },
+      "pending_events": {
+        "name": "Pending heartbeats"
+      },
+      "cpu_percent": {
+        "name": "CPU usage (OS view)"
+      },
+      "memory_percent": {
+        "name": "Memory usage (OS view)"
+      },
+      "storage_percent": {
+        "name": "HA data filesystem usage"
+      },
+      "entities": {
+        "name": "Entities"
+      },
+      "devices": {
+        "name": "Devices"
+      },
+      "automations": {
+        "name": "Automations"
+      },
+      "scenes": {
+        "name": "Scenes"
+      },
+      "integrations": {
+        "name": "Integrations"
+      },
+      "available_updates": {
+        "name": "Available updates"
+      }
     }
   },
   "exceptions": {
-    "invalid_auth": {"message": "The HA Monitor agent token is invalid or revoked. Pair this instance again with a new code."}
+    "invalid_auth": {
+      "message": "The HA Monitor agent token is invalid or revoked. Pair this instance again with a new code."
+    }
   },
   "issues": {
     "upload_blocked": {
       "title": "HA Monitor uploads have stopped",
       "description": "The receiver or local payload failed a permanent check: {reason}. No unchanged uploads will be retried. Check the receiver's protocol v1 compatibility, instance UUID, HTTPS ingress, certificate chain and system clocks. For HTTP 400/413/415/422, correct the receiver/payload compatibility; for 403, correct ingress or instance configuration. Correct the cause, then reload the integration. Use Reconfigure with a new pairing code if the receiver URL or credentials changed. TLS certificate verification cannot be disabled."
+    },
+    "monitoring_blocked": {
+      "title": "HA Monitor monitoring uploads stopped",
+      "description": "Monitoring Snapshot v1 failed: {reason}. HTTP 404 means the monitoring receiver is absent; 409 means a snapshot ID was reused with changed content. Correct compatibility, HTTPS or clock settings, then reload. Local collection and heartbeats continue independently."
+    }
+  },
+  "selector": {
+    "metrics": {
+      "options": {
+        "cpu_percent": "CPU usage (OS view)",
+        "memory_percent": "Memory usage (OS view)",
+        "storage_percent": "HA data filesystem usage"
+      }
     }
   }
 }

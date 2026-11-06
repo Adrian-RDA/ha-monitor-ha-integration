@@ -3,6 +3,7 @@
 import asyncio
 from collections import deque
 from datetime import timedelta
+import math
 import re
 import ssl
 from unittest.mock import patch
@@ -40,6 +41,12 @@ class LaravelBackend:
         # Exercise compatibility with the original single-heartbeat receiver,
         # independently of the upper bound advertised by the v1 pair response.
         self.max_ingest_events = 1
+        self.monitoring_requests = []
+        self.monitoring_stored = {}
+        self.monitoring_responses = deque()
+        self.monitoring_commit_then_fail = False
+        self.monitoring_gate = None
+        self.monitoring_started = asyncio.Event()
         self.limits = {
             "heartbeat_interval_seconds": 60,
             "max_batch_events": 100,
@@ -145,6 +152,143 @@ class LaravelBackend:
             }
         )
 
+    async def monitoring(self, request):
+        """Validate the full Snapshot v1 schema independently of ingest."""
+        raw = await request.read()
+        payload = await request.json()
+        self.monitoring_requests.append((payload, dict(request.headers), len(raw)))
+        self.monitoring_started.set()
+        if self.monitoring_gate is not None:
+            await self.monitoring_gate.wait()
+        if self.monitoring_responses:
+            return self.monitoring_responses.popleft()
+        assert request.secure and request.content_type == "application/json"
+        assert "Content-Encoding" not in request.headers
+        assert len(raw) <= 65536
+        if (
+            self.revoked
+            or request.headers.get("Authorization") != f"Bearer {self.token}"
+        ):
+            return web.json_response({}, status=401)
+        assert set(payload) == {"schema_version", "instance_id", "sent_at", "snapshots"}
+        assert type(payload["schema_version"]) is int and payload["schema_version"] == 1
+        assert payload["instance_id"] == self.instance_id
+        sent = dt_util.parse_datetime(payload["sent_at"])
+        assert sent is not None and sent.tzinfo is not None
+        assert sent <= dt_util.utcnow() + timedelta(minutes=5)
+        assert 1 <= len(payload["snapshots"]) <= 20
+        ids = set()
+        for snapshot in payload["snapshots"]:
+            assert set(snapshot) == {
+                "snapshot_id",
+                "observed_at",
+                "metrics",
+                "inventory",
+                "updates",
+            }
+            key = snapshot["snapshot_id"]
+            assert str(UUID(key)) == key and key not in ids
+            ids.add(key)
+            observed = dt_util.parse_datetime(snapshot["observed_at"])
+            assert observed is not None and observed.tzinfo is not None
+            assert dt_util.utcnow() - timedelta(hours=24) <= observed <= sent
+            assert set(snapshot["metrics"]) == {
+                "cpu_percent",
+                "memory_percent",
+                "storage_percent",
+            }
+            assert set(snapshot["inventory"]) == {
+                "entities",
+                "devices",
+                "automations",
+                "scenes",
+                "integrations",
+            }
+            for section in ("metrics", "inventory"):
+                for name, value in snapshot[section].items():
+                    assert set(value) == (
+                        {"status", "value", "scope"}
+                        if section == "metrics"
+                        else {"status", "value"}
+                    )
+                    assert value["status"] in {
+                        "ok",
+                        "unknown",
+                        "unavailable",
+                        "unsupported",
+                    }
+                    if value["status"] == "ok":
+                        assert type(value["value"]) in (int, float)
+                        assert math.isfinite(value["value"])
+                        assert (
+                            0
+                            <= value["value"]
+                            <= (100 if section == "metrics" else 1_000_000)
+                        )
+                        if section == "inventory":
+                            assert type(value["value"]) is int
+                    else:
+                        assert value["value"] is None
+                    if section == "metrics":
+                        allowed = (
+                            {"host", "data"}
+                            if name == "storage_percent"
+                            else {"host", "home_assistant"}
+                        )
+                        assert value["scope"] in allowed | {None}
+                        assert value["status"] != "ok" or value["scope"] is not None
+            updates = snapshot["updates"]
+            assert set(updates) == {"status", "items"}
+            assert updates["status"] in {"ok", "unknown", "unavailable", "unsupported"}
+            assert len(updates["items"]) <= 100
+            assert updates["status"] == "ok" or not updates["items"]
+            item_keys, products = set(), set()
+            for item in updates["items"]:
+                assert set(item) == {
+                    "key",
+                    "kind",
+                    "name",
+                    "installed_version",
+                    "available_version",
+                }
+                assert re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,127}", item["key"])
+                assert item["key"] not in item_keys
+                item_keys.add(item["key"])
+                assert item["kind"] in {"core", "os", "other"}
+                if item["kind"] != "other":
+                    assert item["kind"] not in products
+                    products.add(item["kind"])
+                assert 1 <= len(item["name"]) <= 120
+                assert not any(ord(char) < 32 for char in item["name"])
+                for version_key in ("installed_version", "available_version"):
+                    version = item[version_key]
+                    if version_key == "installed_version" and version is None:
+                        continue
+                    assert re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}", version)
+            if (
+                key in self.monitoring_stored
+                and self.monitoring_stored[key] != snapshot
+            ):
+                return web.json_response({}, status=409)
+        accepted = duplicates = 0
+        for snapshot in payload["snapshots"]:
+            key = snapshot["snapshot_id"]
+            if key in self.monitoring_stored:
+                duplicates += 1
+            else:
+                self.monitoring_stored[key] = snapshot
+                accepted += 1
+        if self.monitoring_commit_then_fail:
+            self.monitoring_commit_then_fail = False
+            return web.json_response({}, status=503)
+        return web.json_response(
+            {
+                "accepted": accepted,
+                "duplicates": duplicates,
+                "received_at": dt_util.utcnow().isoformat(),
+            }
+        )
+
 
 @pytest.fixture
 async def backend(hass, socket_enabled):
@@ -159,6 +303,7 @@ async def backend(hass, socket_enabled):
     app = web.Application()
     app.router.add_post("/api/v1/agents/pair", backend.pair)
     app.router.add_post("/api/v1/agents/ingest", backend.ingest)
+    app.router.add_post("/api/v1/agents/monitoring", backend.monitoring)
     server = TestServer(app, scheme="https")
     await server.start_server(ssl=server_context)
     backend.url = str(server.make_url("/")).rstrip("/")
@@ -198,6 +343,8 @@ async def backend(hass, socket_enabled):
                 await entry.runtime_data.async_stop()
         if backend.gate is not None:
             backend.gate.set()
+        if backend.monitoring_gate is not None:
+            backend.monitoring_gate.set()
     await server.close()
     loop.set_exception_handler(original_exception_handler)
 
