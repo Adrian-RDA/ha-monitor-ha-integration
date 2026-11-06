@@ -20,7 +20,6 @@ from .client import AuthenticationError, ProtocolError, TransportError, encode_p
 from .collectors import (
     ResourceCollector,
     collect_inventory,
-    collect_updates,
     metric,
     observation,
     unavailable_metrics,
@@ -28,6 +27,7 @@ from .collectors import (
 from .const import (
     BACKOFF_CAP,
     CONF_AGENT_TOKEN,
+    CONF_DISCOVER_UPDATES,
     CONF_ENABLED,
     CONF_EXPORT_METRICS,
     CONF_INSTANCE_ID,
@@ -40,6 +40,7 @@ from .const import (
     METRIC_KEYS,
     MONITORING_INTERVAL,
 )
+from .updates import UpdateInventory, collect_update_inventory
 
 if TYPE_CHECKING:
     from . import AgentConfigEntry
@@ -62,6 +63,7 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(seconds=MONITORING_INTERVAL),
         )
         self._resources = ResourceCollector(hass.config.config_dir)
+        self.update_inventory = UpdateInventory("unknown")
         self.uploader = MonitoringUploader(hass, entry, heartbeat)
         # Keep collection subscribed independently of optional local entities.
         self._unsubscribe = self.async_add_listener(self._async_observed)
@@ -78,19 +80,22 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception:
             inventory = {key: observation("unavailable") for key in INVENTORY_KEYS}
         try:
-            updates = collect_updates(
+            self.update_inventory = collect_update_inventory(
                 self.hass,
                 self.entry.options.get(CONF_SYSTEM_UPDATES, True),
                 self.entry.options.get(CONF_UPDATE_ENTITIES, []),
+                discover=self.entry.options.get(CONF_DISCOVER_UPDATES, True),
             )
         except Exception:
-            updates = {"status": "unavailable", "items": []}
+            self.update_inventory = UpdateInventory(
+                "unavailable", collection_issues=("collection_failed",)
+            )
         return {
             "snapshot_id": str(uuid4()),
             "observed_at": dt_util.utcnow().isoformat(),
             "metrics": metrics,
             "inventory": inventory,
-            "updates": updates,
+            "updates": self.update_inventory.as_protocol(),
         }
 
     @callback

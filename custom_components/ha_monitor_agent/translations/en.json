@@ -48,13 +48,14 @@
     "step": {
       "init": {
         "title": "Monitoring and transmission",
-        "description": "Local collection runs every 60 seconds independently of the server. Monitoring transmission is initially off. Enabling it sends selected resources, inventory totals and update sources. CPU/RAM describe the visible operating system, not container or HA process usage. Supervisor Core/OS sources are identified through the registry. Explicitly select other update entities (at most 100 sources). Pausing stops both uploads; local collection continues. Changes reload the integration and discard retry buffers.",
+        "description": "Local collection runs every 60 seconds independently of the server. Monitoring transmission is initially off. Automatic collection includes all enabled update entities, including those without installation support; disabled sources are not enabled. Manual selection can additionally require specific sources to be monitored. CPU/RAM describe the visible OS. Snapshot v1 can transmit only 100 available updates and restricted version strings; missing sources or incompatible data are indicated in the local update sensor and diagnostics. Pausing stops both uploads; local collection continues. Changes reload the integration and discard retry buffers.",
         "data": {
           "enabled": "Enable transmission",
           "monitoring_enabled": "Transmit monitoring snapshots",
           "export_metrics": "Resources to transmit",
           "system_updates": "Collect Supervisor Core/OS updates",
-          "update_entities": "Additional update entities"
+          "update_entities": "Explicitly monitor additional update entities",
+          "discover_updates": "Automatically collect all update entities"
         }
       }
     }

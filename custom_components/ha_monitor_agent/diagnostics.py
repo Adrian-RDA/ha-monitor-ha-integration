@@ -35,5 +35,6 @@ async def async_get_config_entry_diagnostics(
             "pending_snapshots": uploader.pending_snapshots,
             "dropped_snapshots": uploader.dropped_snapshots,
             "last_upload": uploader.last_upload,
+            "updates": sender.monitoring.update_inventory.summary(),
         }
     return result

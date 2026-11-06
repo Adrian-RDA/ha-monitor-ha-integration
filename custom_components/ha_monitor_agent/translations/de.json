@@ -48,13 +48,14 @@
     "step": {
       "init": {
         "title": "Monitoring und Übertragung",
-        "description": "Lokale Erfassung läuft alle 60 Sekunden unabhängig vom Server. Monitoring-Übertragung ist zunächst aus. Bei Aktivierung werden ausgewählte Ressourcen, Inventarsummen und Update-Quellen gesendet. CPU/RAM beschreiben die sichtbare Betriebssystemumgebung, keine Container- oder HA-Prozessauslastung. Supervisor Core/OS werden anhand der Registry erkannt. Weitere Update-Entitäten ausdrücklich auswählen (höchstens 100 Quellen). Pausieren stoppt beide Uploads; lokale Erfassung läuft weiter. Änderungen laden die Integration neu und verwerfen den Wiederholungspuffer.",
+        "description": "Lokale Erfassung läuft alle 60 Sekunden unabhängig vom Server. Monitoring-Übertragung ist zunächst aus. Automatische Erfassung berücksichtigt alle aktiven Update-Entitäten, auch ohne Installationsfunktion; deaktivierte Quellen werden nicht eingeschaltet. Die manuelle Auswahl kann zusätzlich Quellen verbindlich überwachen. CPU/RAM beschreiben die sichtbare OS-Umgebung. Snapshot v1 kann nur 100 verfügbare Updates und eingeschränkte Versionskennungen übertragen; fehlende Quellen oder inkompatible Daten werden im lokalen Update-Sensor und in der Diagnose kenntlich. Pausieren stoppt beide Uploads; lokale Erfassung läuft weiter. Änderungen laden die Integration neu und verwerfen Wiederholungspuffer.",
         "data": {
           "enabled": "Übertragung aktivieren",
           "monitoring_enabled": "Monitoring-Snapshots übertragen",
           "export_metrics": "Ressourcen zur Übertragung",
           "system_updates": "Supervisor Core-/OS-Updates erfassen",
-          "update_entities": "Weitere Update-Entitäten"
+          "update_entities": "Zusätzliche Update-Entitäten ausdrücklich überwachen",
+          "discover_updates": "Alle Update-Entitäten automatisch erfassen"
         }
       }
     }

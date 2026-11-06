@@ -116,10 +116,10 @@ class MonitoringSensor(CoordinatorEntity[MonitoringCoordinator], SensorEntity):
         if not data:
             return {"status": "unknown", "value": None}
         if self._key == "available_updates":
-            updates = data["updates"]
+            updates = self.coordinator.update_inventory
             return {
-                "status": updates["status"],
-                "value": len(updates["items"]) if updates["status"] == "ok" else None,
+                "status": updates.status,
+                "value": len(updates.offered) if updates.status == "ok" else None,
             }
         section = "metrics" if self._key in METRIC_KEYS else "inventory"
         return data[section][self._key]
@@ -137,4 +137,6 @@ class MonitoringSensor(CoordinatorEntity[MonitoringCoordinator], SensorEntity):
         result = {"collection_status": self._observation["status"]}
         if self._key in METRIC_KEYS:
             result["scope"] = self._observation.get("scope")
+        elif self._key == "available_updates":
+            result.update(self.coordinator.update_inventory.summary())
         return result

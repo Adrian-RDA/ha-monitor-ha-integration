@@ -2,7 +2,8 @@
   "domain": "ha_monitor_agent",
   "name": "HA Monitor",
   "after_dependencies": [
-    "hassio"
+    "hassio",
+    "update"
   ],
   "codeowners": [
     "@Adrian-RDA"
@@ -15,5 +16,5 @@
   "requirements": [
     "psutil>=7.2.2"
   ],
-  "version": "0.2.0"
+  "version": "0.2.1"
 }

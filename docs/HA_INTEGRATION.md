@@ -1,6 +1,6 @@
 # Home Assistant Custom Integration – Sprint 5 architecture
 
-Status: implemented in version **0.2.0**. [README](../README.md) describes installation, configuration, scope semantics and operational limits. [PROTOCOL.md](PROTOCOL.md) remains the authoritative Laravel contract. This repository contains only the HA integration; no Laravel or infrastructure changes belong here.
+Status: implemented in version **0.2.1**. [README](../README.md) describes installation, configuration, scope semantics and operational limits. [PROTOCOL.md](PROTOCOL.md) remains the authoritative Laravel contract. This repository contains only the HA integration; no Laravel or infrastructure changes belong here.
 
 ## Local collection
 
@@ -8,13 +8,13 @@ Status: implemented in version **0.2.0**. [README](../README.md) describes insta
 
 Entity/device registries include disabled entries. Automation/scene totals count currently present domain states. Integration totals deduplicate successfully loaded component domains, including YAML setups. Inventory and updates stay unknown until HA has finished startup.
 
-Core/OS update sources use the Supervisor integration's public cached information and stable entity-registry unique IDs. `after_dependencies: [hassio]` arranges ordering when Supervisor is present without requiring it on Container/Core installations. Additional sources are explicitly selected `update.*` entities. Native update availability, including skipped versions, is used instead of ordering arbitrary version strings. There is no separate external version lookup on Container/Core. A missing, failed or invalid source makes the entire configured update collection unavailable. Unsupported OS sources are never fabricated. Names are fixed product names or selected entity IDs, avoiding private friendly names and arbitrary attributes.
+Core/OS update sources use the Supervisor integration's public cached information and stable entity-registry unique IDs. `after_dependencies: [hassio]` arranges ordering when Supervisor is present without requiring it on Container/Core installations. The default automatic discovery includes all enabled/hidden `update.*` states and registry coverage, regardless of INSTALL capability. Explicit selection can additionally require particular sources or replace discovery when it is switched off. Disabled sources are observed as disabled without enabling them; automatically discovered disabled sources are excluded from active coverage, whereas explicitly monitored disabled sources make coverage incomplete. Native update availability, including skipped versions, is used instead of ordering arbitrary version strings. There is no separate external version lookup on Container/Core. A missing or failed monitored source makes coverage incomplete. `updates.py` preserves an immutable local inventory, including device/source/version metadata and install capability, independently of the v1 wire projection. Only offered updates are checked against v1 version syntax; an up-to-date Shelly source with an opaque build ID cannot suppress other offered updates. Offered build IDs outside v1 syntax still require an unavailable wire collection without silently rewriting versions. Unsupported OS sources are never fabricated. Names are fixed product names or selected entity IDs, avoiding private friendly names and arbitrary attributes.
 
 ## Shared state and optional entities
 
 `MonitoringCoordinator` in `monitoring.py` uses HA's `DataUpdateCoordinator` and a permanent subscription to collect every 60 seconds even with all monitoring entities disabled. It holds one common observation for local sensors and subsequent export. Each cycle creates a fresh UUID and UTC timestamp; per-collector failures produce explicit statuses/nulls instead of stale values or fabricated zeroes. Optional diagnostic sensors default to disabled and read this common state without I/O.
 
-Monitoring upload is opt-in. Options select the exported resources, Supervisor Core/OS sources and additional update entities. Disabling transmission preserves collection. Disabling/unloading the integration stops its collection as part of the normal HA lifecycle.
+Monitoring upload is opt-in. Options select exported resources, Supervisor Core/OS sources, automatic update discovery (on by default), and additionally required update entities. Local discovery is capped at 4,096 sources; v1 is limited to 100 offered items. Disabling transmission preserves collection. Disabling/unloading the integration stops its collection as part of the normal HA lifecycle.
 
 ## Independent transport
 
@@ -34,5 +34,7 @@ Tests use real HA entries, registries, coordinators, entity platforms and flows 
 - [System Monitor reference implementation](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/systemmonitor/coordinator.py)
 - [Supervisor update identities](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/hassio/entity.py)
 - [psutil BSD-3-Clause license](https://github.com/giampaolo/psutil/blob/master/LICENSE)
+
+See [update collection analysis and Laravel handoff](UPDATE_COLLECTION.md) for the end-to-end v1 test boundary, exact metadata limitations, and the required future backend/API/UI changes. No live Laravel source or UI was accessed.
 
 No HA source was copied or vendored. HACS/Marketplace publication, remote infrastructure changes and Git commits require a separate user request.

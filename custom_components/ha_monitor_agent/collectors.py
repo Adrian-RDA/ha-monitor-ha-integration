@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import re
 from typing import Any
 
 from homeassistant.core import CoreState, HomeAssistant, callback
@@ -12,6 +11,7 @@ from homeassistant.helpers import entity_registry as er
 import psutil
 
 from .const import INVENTORY_KEYS, METRIC_KEYS
+from .updates import collect_updates as collect_updates
 
 
 def observation(status: str, value: int | float | None = None) -> dict[str, Any]:
@@ -107,91 +107,6 @@ def collect_inventory(hass: HomeAssistant) -> dict[str, Any]:
         else observation("unavailable")
         for key, value in counts.items()
     }
-
-
-@callback
-def collect_updates(
-    hass: HomeAssistant, system_updates: bool, selected: list[str]
-) -> dict[str, Any]:
-    """Only configured sources; any incomplete source invalidates the collection.
-
-    Core/OS identity uses HA's stable Supervisor unique IDs, never display names.
-    Only the five protocol fields are constructed; arbitrary attributes stay local.
-    """
-
-    def missing(status: str) -> dict[str, Any]:
-        return {"status": status, "items": []}
-
-    if hass.state is not CoreState.running:
-        return missing("unknown")
-    registry = er.async_get(hass)
-    kinds = {}
-    for kind in ("core", "os"):
-        entity_id = registry.async_get_entity_id(
-            "update", "hassio", f"home_assistant_{kind}_version_latest"
-        )
-        if entity_id:
-            kinds[entity_id] = kind
-    sources = set(selected)
-    if system_updates and "hassio" in hass.config.components:
-        # These public helpers read the Supervisor integration's existing cache.
-        from homeassistant.components.hassio import get_info
-
-        try:
-            info = get_info(hass)
-        except Exception:
-            return missing("unavailable")
-        expected = {"core", "os"} if info.get("hassos") is not None else {"core"}
-        if not expected.issubset(kinds.values()):
-            return missing("unavailable")
-        sources.update(kinds)
-    if not sources:
-        return missing("unsupported")
-    if len(sources) > 100:
-        return missing("unavailable")
-    items = []
-    for entity_id in sorted(sources):
-        if not re.fullmatch(
-            r"[a-z0-9][a-z0-9_.-]{0,127}", entity_id
-        ) or not entity_id.startswith("update."):
-            return missing("unavailable")
-        state = hass.states.get(entity_id)
-        if state is None or state.state not in {"on", "off"}:
-            return missing("unavailable")
-        # Skipped updates are still available: UpdateEntity reports them as off.
-        available = state.attributes.get("latest_version")
-        installed = state.attributes.get("installed_version")
-        if not isinstance(available, str) or not re.fullmatch(
-            r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}", available
-        ):
-            return missing("unavailable")
-        if installed is not None and (
-            not isinstance(installed, str)
-            or not re.fullmatch(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}", installed)
-        ):
-            return missing("unavailable")
-        if state.state == "off" and (
-            not state.attributes.get("skipped_version") or installed == available
-        ):
-            continue
-        kind = kinds.get(entity_id, "other")
-        # Fixed product names and selected source IDs avoid exporting user names.
-        name = {"core": "Home Assistant Core", "os": "Home Assistant OS"}.get(
-            kind, entity_id[:120]
-        )
-        items.append(
-            {
-                "key": entity_id,
-                "kind": kind,
-                "name": name,
-                "installed_version": installed,
-                "available_version": available,
-            }
-        )
-    items.sort(
-        key=lambda item: ({"core": 0, "os": 1, "other": 2}[item["kind"]], item["key"])
-    )
-    return {"status": "ok", "items": items}
 
 
 def unavailable_metrics() -> dict[str, Any]:
