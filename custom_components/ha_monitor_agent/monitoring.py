@@ -1,11 +1,11 @@
-"""Shared local observations and a separate, bounded Monitoring Snapshot v1 worker."""
+"""Shared local observations and a separate, bounded atomic snapshot worker."""
 
 from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-import json
 import logging
 import random
 from typing import TYPE_CHECKING, Any
@@ -33,13 +33,16 @@ from .const import (
     CONF_EXPORT_METRICS,
     CONF_INSTANCE_ID,
     CONF_MONITORING_ENABLED,
+    CONF_MONITORING_SCHEMA_VERSION,
     CONF_SYSTEM_UPDATES,
     CONF_UPDATE_ENTITIES,
     DOMAIN,
     INVENTORY_KEYS,
     MAX_BODY_BYTES,
+    MAX_MONITORING_BODY_BYTES,
     METRIC_KEYS,
     MONITORING_INTERVAL,
+    MONITORING_SCHEMA_VERSION,
 )
 from .updates import UpdateInventory, collect_update_inventory
 
@@ -68,8 +71,24 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.export_update_inventory = UpdateInventory("unknown")
         self.uploader = MonitoringUploader(hass, entry, heartbeat)
         # Keep collection subscribed independently of optional local entities.
-        self._unsubscribe = self.async_add_listener(self._async_observed)
+        self._unsubscribe = self.async_add_listener(lambda: None)
         self.entry = entry
+
+    @property
+    def export_all(self) -> bool:
+        return self.entry.options.get(CONF_EXPORT_ALL_UPDATES, True)
+
+    def _project(self, inventory: UpdateInventory) -> dict[str, Any]:
+        if self.uploader.schema_version == 1:
+            return inventory.as_protocol()
+        return inventory.as_protocol_v2("all" if self.export_all else "selected")
+
+    def _issues(self, inventory: UpdateInventory) -> dict[str, int]:
+        return (
+            inventory.protocol_issues
+            if self.uploader.schema_version == 1
+            else inventory.v2_issues
+        )
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -83,24 +102,26 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             inventory = {key: observation("unavailable") for key in INVENTORY_KEYS}
         # Export-all is independently actionable: it necessarily reads all sources
         # even if the local-only discovery preference was previously switched off.
-        discover = self.entry.options.get(
-            CONF_DISCOVER_UPDATES, True
-        ) or self.entry.options.get(CONF_EXPORT_ALL_UPDATES, False)
+        discover = (
+            self.entry.options.get(CONF_DISCOVER_UPDATES, True) or self.export_all
+        )
         self.update_inventory = self._collect_updates(discover=discover)
         # Local discovery must not expand v1's complete replacement set. Reading
         # the explicit scope separately also isolates failures in other sources.
-        if self.entry.options.get(CONF_EXPORT_ALL_UPDATES, False) or not discover:
+        if self.export_all or not discover:
             self.export_update_inventory = self.update_inventory
         else:
             self.export_update_inventory = self._collect_updates(discover=False)
         self._async_update_export_issue()
-        return {
+        snapshot = {
             "snapshot_id": str(uuid4()),
             "observed_at": dt_util.utcnow().isoformat(),
             "metrics": metrics,
             "inventory": inventory,
-            "updates": self.export_update_inventory.as_protocol(),
+            "updates": self._project(self.export_update_inventory),
         }
+        await self.uploader.async_observed(snapshot)
+        return snapshot
 
     @callback
     def _collect_updates(self, *, discover: bool) -> UpdateInventory:
@@ -124,25 +145,26 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Report local coverage separately from the actual configured wire scope."""
         local = self.update_inventory
         exported = self.export_update_inventory
-        projection = exported.as_protocol()
+        projection = self._project(exported)
         selected_ids = {record.entity_id for record in exported.records}
         return {
             **local.summary(),
-            "local_protocol_issues": local.protocol_issues,
-            "export_scope": "all"
-            if self.entry.options.get(CONF_EXPORT_ALL_UPDATES, False)
-            else "selected",
+            "schema_version": self.uploader.schema_version,
+            "local_protocol_issues": self._issues(local),
+            "export_scope": "all" if self.export_all else "selected",
             "export_sources": len(exported.records),
             "export_known_available": len(exported.offered),
             "export_item_count": len(projection["items"]),
             "blocked_known_available": len(exported.offered)
-            if projection["status"] != "ok"
-            else 0,
+            - sum(
+                item.get("availability", "available") in {"available", "skipped"}
+                for item in projection["items"]
+            ),
             "not_exported": sum(
                 record.entity_id not in selected_ids for record in local.offered
             ),
-            "protocol_status": projection["status"],
-            "protocol_issues": exported.protocol_issues,
+            "protocol_status": projection.get("coverage", projection.get("status")),
+            "protocol_issues": self._issues(exported),
         }
 
     @callback
@@ -168,11 +190,6 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             ir.async_delete_issue(self.hass, DOMAIN, self.update_export_issue_id)
 
-    @callback
-    def _async_observed(self) -> None:
-        if self.data:
-            self.uploader.async_observed(self.data)
-
     async def async_stop(self) -> None:
         if self._unsubscribe is not None:
             self._unsubscribe()
@@ -181,11 +198,19 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.uploader.async_stop()
 
 
+@dataclass(frozen=True, slots=True)
+class FrozenSnapshot:
+    """Serialized once off the event loop; immutable contents and observation time."""
+
+    body: bytes
+    observed_at: datetime
+
+
 class MonitoringUploader:
     """One in-flight snapshot plus the latest coalesced observation, in memory.
 
     Frozen serialized observations prevent accidental mutation on retry. A maximum
-    of four monitoring requests/min leaves room for the existing heartbeat worker.
+    of four monitoring requests/min stays below the v2 instance quota of six.
     """
 
     def __init__(
@@ -197,8 +222,15 @@ class MonitoringUploader:
         self.last_upload: datetime | None = None
         self.failures = 0
         self.dropped_snapshots = 0
-        self._pending: bytes | None = None
-        self._latest: bytes | None = None
+        self.schema_version = entry.options.get(
+            CONF_MONITORING_SCHEMA_VERSION, MONITORING_SCHEMA_VERSION
+        )
+        self.max_body_bytes = (
+            MAX_MONITORING_BODY_BYTES if self.schema_version == 2 else MAX_BODY_BYTES
+        )
+        self._pending: FrozenSnapshot | None = None
+        self._latest: FrozenSnapshot | None = None
+        self._send_lock = asyncio.Lock()
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._delay = 15.0
@@ -219,8 +251,7 @@ class MonitoringUploader:
             CONF_MONITORING_ENABLED, False
         )
 
-    @callback
-    def async_observed(self, snapshot: dict[str, Any]) -> None:
+    async def async_observed(self, snapshot: dict[str, Any]) -> None:
         if (
             not self.enabled
             or self._stopped
@@ -238,19 +269,29 @@ class MonitoringUploader:
                 for key, value in snapshot["metrics"].items()
             },
         }
-        frozen = encode_payload(exported)
+        # Large collections must not perform JSON serialization on HA's event loop.
+        frozen = FrozenSnapshot(
+            await self.hass.async_add_executor_job(encode_payload, exported),
+            datetime.fromisoformat(snapshot["observed_at"]),
+        )
+        if self._stopped or self.status in {"blocked", "reauth_required"}:
+            return
         envelope = self._envelope(frozen)
-        if len(envelope) > MAX_BODY_BYTES:
-            # Preserve a complete snapshot, explicitly marking excessive updates.
-            exported["updates"] = {"status": "unavailable", "items": []}
-            frozen = encode_payload(exported)
+        if len(envelope) > self.max_body_bytes:
+            # No independent fragments or empty replacement: retain server state.
+            self._block("payload_too_large")
+            return
         self.dropped_snapshots += int(self._latest is not None)
         self._latest = frozen
         self._wake.set()
 
     @callback
     def async_start(self) -> None:
-        if self.enabled:
+        if (
+            self.enabled
+            and not self._stopped
+            and self.status not in {"blocked", "reauth_required"}
+        ):
             self.status = "waiting"
             self._task = self.entry.async_create_background_task(
                 self.hass,
@@ -268,25 +309,49 @@ class MonitoringUploader:
             if self.pending_snapshots:
                 self._wake.set()
 
-    def _envelope(self, snapshot: bytes) -> bytes:
-        return encode_payload(
+    def _envelope(self, snapshot: FrozenSnapshot) -> bytes:
+        header = encode_payload(
             {
-                "schema_version": 1,
+                "schema_version": self.schema_version,
                 "instance_id": self.entry.data[CONF_INSTANCE_ID],
                 "sent_at": dt_util.utcnow().isoformat(),
-                "snapshots": [json.loads(snapshot)],
             }
         )
+        return header[:-1] + b',"snapshots":[' + snapshot.body + b"]}"
 
-    def _valid(self, frozen: bytes | None, now: datetime) -> bytes | None:
+    def _valid(
+        self, frozen: FrozenSnapshot | None, now: datetime
+    ) -> FrozenSnapshot | None:
         if frozen is not None:
-            observed = datetime.fromisoformat(json.loads(frozen)["observed_at"])
+            observed = frozen.observed_at
             if now - timedelta(hours=23) <= observed <= now:
                 return frozen
             self.dropped_snapshots += 1
         return None
 
     async def async_send_once(self) -> None:
+        if self._send_lock.locked():
+            return
+        async with self._send_lock:
+            await self._async_send_once()
+        # An older response must not undo revocation on the heartbeat path.
+        if self.heartbeat.status == "reauth_required":
+            self.status, self.last_error = "reauth_required", "invalid_auth"
+
+    @callback
+    def _block(self, reason: str) -> None:
+        self.status, self.last_error = "blocked", reason
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self.issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="monitoring_blocked",
+            translation_placeholders={"reason": reason},
+        )
+
+    async def _async_send_once(self) -> None:
         if (
             not self.enabled
             or self._stopped
@@ -307,28 +372,25 @@ class MonitoringUploader:
             return
         try:
             body = self._envelope(self._pending)
-            if len(body) > MAX_BODY_BYTES:
+            if len(body) > self.max_body_bytes:
                 raise ProtocolError("payload_too_large")
-            self.last_upload = await self.heartbeat.client.async_monitoring(
-                body, self.entry.data[CONF_AGENT_TOKEN], 1
+            received_at = await self.heartbeat.client.async_monitoring(
+                body,
+                self.entry.data[CONF_AGENT_TOKEN],
+                1,
+                schema_version=self.schema_version,
             )
         except AuthenticationError:
             self.status, self.last_error = "reauth_required", "invalid_auth"
             self.heartbeat.async_auth_failed()
             return
         except ProtocolError as err:
-            self.status, self.last_error = "blocked", str(err)
-            ir.async_create_issue(
-                self.hass,
-                DOMAIN,
-                self.issue_id,
-                is_fixable=False,
-                severity=ir.IssueSeverity.ERROR,
-                translation_key="monitoring_blocked",
-                translation_placeholders={"reason": str(err)},
-            )
+            if self.status != "blocked":
+                self._block(str(err))
             return
         except TransportError as err:
+            if self._stopped or self.status == "blocked":
+                return
             self.failures += 1
             backoff = min(BACKOFF_CAP, 15 * 2 ** min(self.failures - 1, 10))
             self._delay = max(
@@ -336,6 +398,13 @@ class MonitoringUploader:
             )
             self.status, self.last_error = "retrying", str(err)
         else:
+            if (
+                self._stopped
+                or self.status == "blocked"
+                or self.heartbeat.status == "reauth_required"
+            ):
+                return
+            self.last_upload = received_at
             self._pending = None
             self.status, self.last_error = "online", None
             self.failures = 0

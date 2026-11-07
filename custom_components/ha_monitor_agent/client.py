@@ -1,4 +1,4 @@
-"""Small, HA-independent async client for the Laravel v1 contract."""
+"""Small, HA-independent async client for the Laravel agent contracts."""
 
 from __future__ import annotations
 
@@ -168,14 +168,26 @@ class AgentClient:
         """Only acknowledge a complete, valid, durably committed batch."""
         return await self._async_acknowledge("ingest", body, token, count)
 
-    async def async_monitoring(self, body: bytes, token: str, count: int) -> datetime:
-        """Send complete Monitoring Snapshot v1 observations separately."""
-        return await self._async_acknowledge("monitoring", body, token, count)
+    async def async_monitoring(
+        self, body: bytes, token: str, count: int, *, schema_version: int = 1
+    ) -> datetime:
+        """Send an atomic collection using an explicitly chosen schema, no fallback."""
+        if type(schema_version) is not int or schema_version not in {1, 2}:
+            raise ProtocolError("unsupported_schema")
+        return await self._async_acknowledge(
+            "monitoring", body, token, count, api_version=schema_version
+        )
 
     async def _async_acknowledge(
-        self, endpoint: str, body: bytes, token: str, count: int
+        self,
+        endpoint: str,
+        body: bytes,
+        token: str,
+        count: int,
+        *,
+        api_version: int = 1,
     ) -> datetime:
-        data = await self._async_post(endpoint, body, token)
+        data = await self._async_post(endpoint, body, token, api_version=api_version)
         accepted, duplicates = data.get("accepted"), data.get("duplicates")
         if (
             type(accepted) is not int
@@ -188,14 +200,19 @@ class AgentClient:
         return parse_timestamp(data.get("received_at"))
 
     async def _async_post(
-        self, endpoint: str, body: bytes, token: str | None = None
+        self,
+        endpoint: str,
+        body: bytes,
+        token: str | None = None,
+        *,
+        api_version: int = 1,
     ) -> dict[str, Any]:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
         try:
             async with self._session.post(
-                f"{self.server_url}/api/v1/agents/{endpoint}",
+                f"{self.server_url}/api/v{api_version}/agents/{endpoint}",
                 data=body,
                 headers=headers,
                 timeout=ClientTimeout(total=REQUEST_TIMEOUT),

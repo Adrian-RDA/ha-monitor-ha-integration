@@ -48,7 +48,7 @@
     "step": {
       "init": {
         "title": "Monitoring and transmission",
-        "description": "Local collection runs independently of the server and does not automatically transmit newly discovered sources. Update transmission includes Core/OS and the additional sources selected below by default. Other discovered sources cannot block that list. Enabling transmission of all discovered update sources discovers all sources even when local-only discovery is off and includes the complete set; one unknown source or incompatible version then makes the entire update list unavailable under the current API contract. Repairs and diagnostics identify missing or untransmitted updates. Updates without installation support are included. Monitoring transmission is initially off. CPU/RAM describe the visible OS. Pausing stops both uploads; local collection continues. Changes reload the integration and discard retry buffers.",
+        "description": "Monitoring Snapshot v2 transmits all discovered update sources by default, including hidden sources and updates installed outside Home Assistant. Failed sources produce partial coverage while known updates are still transmitted. Original versions, categories and the allowed source/device metadata are included. Explicitly saved source restrictions remain in effect. Disable all-source transmission to export only Core/OS and selected sources. Monitoring transmission is initially off; local collection continues when uploads are paused. Select protocol 1 only for an older receiver; its stricter limits can make the entire update collection unavailable. Changes reload the integration and discard retry buffers.",
         "data": {
           "enabled": "Enable transmission",
           "monitoring_enabled": "Transmit monitoring snapshots",
@@ -56,7 +56,8 @@
           "system_updates": "Collect Supervisor Core/OS updates",
           "update_entities": "Additional update sources to transmit",
           "discover_updates": "Discover all update sources locally",
-          "export_all_updates": "Transmit all discovered update sources"
+          "export_all_updates": "Transmit all discovered update sources",
+          "monitoring_schema_version": "Monitoring protocol (2 recommended; 1 for older receivers)"
         }
       }
     }
@@ -120,11 +121,11 @@
     },
     "monitoring_blocked": {
       "title": "HA Monitor monitoring uploads stopped",
-      "description": "Monitoring Snapshot v1 failed: {reason}. HTTP 404 means the monitoring receiver is absent; 409 means a snapshot ID was reused with changed content. Correct compatibility, HTTPS or clock settings, then reload. Local collection and heartbeats continue independently."
+      "description": "Monitoring Snapshot upload failed: {reason}. A payload_too_large collection exceeds the selected protocol limit; the previous server projection is retained. Reduce the export scope or metadata size and reload. HTTP 404 means this protocol endpoint is absent; 409 means a snapshot ID was reused with changed content. Correct compatibility, HTTPS or clock settings, then reload. There is no automatic protocol fallback. Local collection and heartbeats continue independently."
     },
     "update_export_incomplete": {
       "title": "HA Monitor update transmission is limited",
-      "description": "The local update inventory differs from the sources selected for transmission, or the selected collection cannot be transmitted completely. Known offered updates outside the selection: {omitted}. Reason: {reason}. Select additional update sources in Settings → Devices & services → HA Monitor → Configure. An unavailable source or incompatible firmware version can block the entire selected list. Transmitting all discovered sources includes new sources under the same completeness rule. Raw version strings and partial inventories require a versioned Laravel contract extension. Local collection and heartbeats continue."
+      "description": "Some sources were omitted by the export selection or could not be collected completely. Known offered updates outside the selection: {omitted}. Reason: {reason}. Check the source selection and availability under Settings → Devices & services → HA Monitor → Configure. Snapshot v2 transmits known records with partial coverage; their offered count is a lower bound. Protocol 1 may block the entire update list for a failed source or incompatible version. Local collection and heartbeats continue."
     }
   },
   "selector": {

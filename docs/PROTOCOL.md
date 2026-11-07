@@ -1,6 +1,6 @@
 # HA Monitor - Agent / Server Protocol v1
 
-Status: **Heartbeat receiver implemented in Sprint 2; separate Monitoring Snapshot v1 receiver implemented in Sprint 5.** This is the contract for the separate Python integration repository. No Python sender is included here. Arbitrary `entity_state` exports and automatic token rotation are not implemented. The pairing response and heartbeat contract below remain unchanged.
+Status: **Heartbeat receiver implemented in Sprint 2; Monitoring Snapshot v1 in Sprint 5; independent Monitoring Snapshot v2 implemented on 2026-11-07.** This is the contract for the separate Python integration repository. No Python sender is included here. Arbitrary `entity_state` exports and automatic token rotation are not implemented. The pairing response and heartbeat contract below remain unchanged.
 
 ## Transport and authentication
 
@@ -8,11 +8,12 @@ All agent requests require HTTPS, JSON objects, `Content-Type: application/json`
 
 These routes are stateless and independent of browser login, CSRF, Fortify and Spatie. Browser login never substitutes for an agent token. Credentials identify the instance; the request body cannot select another instance. No HA administrative token or inbound HA connection is used.
 
-| Method | Endpoint                    | Authentication                        |
-| ------ | --------------------------- | ------------------------------------- |
-| POST   | `/api/v1/agents/pair`       | One-time code in JSON                 |
-| POST   | `/api/v1/agents/ingest`     | `Authorization: Bearer <agent_token>` |
-| POST   | `/api/v1/agents/monitoring` | `Authorization: Bearer <agent_token>` |
+| Method | Endpoint                    | Authentication                                                            |
+| ------ | --------------------------- | ------------------------------------------------------------------------- |
+| POST   | `/api/v1/agents/pair`       | One-time code in JSON                                                     |
+| POST   | `/api/v1/agents/ingest`     | `Authorization: Bearer <agent_token>`                                     |
+| POST   | `/api/v1/agents/monitoring` | `Authorization: Bearer <agent_token>`                                     |
+| POST   | `/api/v2/agents/monitoring` | `Authorization: Bearer <agent_token>`; independent snapshot schema/limits |
 
 ### Pairing
 
@@ -273,3 +274,185 @@ vendor/bin/sail artisan test --compact tests/Feature/AgentProtocolTest.php tests
 ```
 
 These tests use the separate PostgreSQL `testing` database and simulated HTTPS; no live HA integration or exposed receiver is required. Real HA-to-Laravel testing needs a separately configured valid HTTPS endpoint. Tests do not configure ingress; consult actual Compose bindings and STATUS.md for the operator's private-LAN setup. Sprint 5 adds no TLS bypass, host-port binding or infrastructure service.
+
+## Monitoring Snapshot v2 (2026-11-07)
+
+**Implemented receiver:** `POST /api/v2/agents/monitoring`, `schema_version: 2`. This is independent of Monitoring Snapshot v1. Pairing and heartbeat endpoints/responses and v1 snapshot validation, limits, replacement and retry semantics remain unchanged. The HA agent 0.2.3 described in the integration repository's `docs/UPDATE_COLLECTION.md` still sends v1; sender implementation/rollout follows separately. There is no automatic fallback or negotiated capability in the frozen pairing response.
+
+### Transport and larger collections
+
+Use the same per-instance bearer token and verified HTTPS, uncompressed JSON object and depth limit 16. V2 permits **2,097,152 actual uncompressed bytes**, **one** snapshot per request and **0–4,096 update source records**. Count every serialized UTF-8 byte, including the envelope, metrics, inventory and metadata. The byte and record limits both apply; reaching one does not waive the other. Oversized requests fail with 413, excessive records/multiple snapshots with 422, before any replacement. Reverse proxies must permit this bounded body on the v2 route; no proxy/infrastructure configuration is changed by this implementation.
+
+This contract deliberately uses a **single atomic collection**, rather than the optional chunk staging approach discussed in UPDATE_COLLECTION.md: it supports more than 100 records/64 KiB without a staging store, chunk expiry, partial assembly or another deployable component. The snapshot UUID identifies the entire collection. Never split a larger collection into independently replacing snapshots, silently truncate it or mark a transport-truncated list complete. If it cannot fit these declared bounds, retain the previous acknowledged projection, surface the limit locally and correct collection/metadata selection or coordinate another protocol extension. Retrying an oversized body unchanged is not useful.
+
+V2 has separate quotas: **30 requests/minute/source IP** before authentication and **6 requests/minute/authenticated instance**. Its uploads/errors/retries do not consume v1's heartbeat/monitoring quota. Credentials, revocation, instance identity and the instance-row lock remain shared. Heartbeat processing and timestamp fields are independent; v2 does not freshen or change them. A recommended v2 cadence is one full snapshot per 60 seconds, with bounded retries, backoff/jitter and coalescing outside HA's event loop.
+
+### Complete request example
+
+```json
+{
+    "schema_version": 2,
+    "instance_id": "7e9dcd76-5fb2-4ee1-8ee8-316f6d498fc1",
+    "sent_at": "2026-11-07T10:00:01Z",
+    "snapshots": [
+        {
+            "snapshot_id": "91ec4ab0-6176-416b-a4ea-49fac35ee443",
+            "observed_at": "2026-11-07T10:00:00.123456Z",
+            "metrics": {
+                "cpu_percent": {
+                    "status": "ok",
+                    "value": 12.5,
+                    "scope": "host"
+                },
+                "memory_percent": {
+                    "status": "ok",
+                    "value": 48,
+                    "scope": "host"
+                },
+                "storage_percent": {
+                    "status": "unsupported",
+                    "value": null,
+                    "scope": null
+                }
+            },
+            "inventory": {
+                "entities": { "status": "ok", "value": 1250 },
+                "devices": { "status": "ok", "value": 80 },
+                "automations": { "status": "ok", "value": 0 },
+                "scenes": { "status": "unknown", "value": null },
+                "integrations": { "status": "ok", "value": 35 }
+            },
+            "updates": {
+                "coverage": "partial",
+                "scope": "all",
+                "counts": {
+                    "total": 2,
+                    "active": 2,
+                    "disabled": 0,
+                    "unknown": 0,
+                    "unavailable": 1,
+                    "available": 1,
+                    "skipped": 0
+                },
+                "items": [
+                    {
+                        "key": "update.shelly_firmware",
+                        "name": "Shelly-Firmware",
+                        "category": "firmware",
+                        "availability": "available",
+                        "source": "shelly",
+                        "device": {
+                            "id": "a9b3e26a43a44a23921f893761409836",
+                            "name": "Flur",
+                            "manufacturer": "Shelly",
+                            "model": "Plus 1PM"
+                        },
+                        "supports_install": false,
+                        "installed_version": "20241011-123000/v1.14.1-g1234567",
+                        "available_version": "20261101-160000/v1.15.0-gabcdef0",
+                        "skipped_version": null,
+                        "in_progress": false,
+                        "disabled_by": null,
+                        "required": true
+                    },
+                    {
+                        "key": "update.immich",
+                        "name": "Immich",
+                        "category": "other",
+                        "availability": "unavailable",
+                        "source": "immich",
+                        "device": null,
+                        "supports_install": null,
+                        "installed_version": null,
+                        "available_version": null,
+                        "skipped_version": null,
+                        "in_progress": null,
+                        "disabled_by": null,
+                        "required": true
+                    }
+                ]
+            }
+        }
+    ]
+}
+```
+
+The envelope has exactly `schema_version`, `instance_id`, `sent_at`, `snapshots`. Each snapshot has exactly `snapshot_id`, `observed_at`, `metrics`, `inventory`, `updates`. All are required. Metrics/inventory keys, definitions, scopes, availability/value combinations and bounds are **identical to v1**. Sent/observation times use v1's RFC3339 rules, maximum six fractional digits, 24-hour replay window, five-minute future tolerance and `observed_at <= sent_at`. The JSON integer version must be exactly 2. Unknown fields at every level are rejected; optional device omission is the only omitted item metadata allowed.
+
+### Coverage, export scope and counters
+
+`updates` must have exactly `coverage`, `scope`, `counts`, `items`:
+
+| Field/value             | Meaning                                                                                                                                                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `scope: all`            | All sources discovered for export by the sender, including hidden active sources and records explaining disabled/missing sources. This is not a promise that HA exposes every device's possible updates.                                   |
+| `scope: selected`       | Explicitly selected source set, including requested Core/OS sources. Completeness is relative to that set, never to the installation as a whole.                                                                                           |
+| `coverage: complete`    | Every required source in this scope was reliably classified. No unknown/unavailable records or required disabled sources are allowed. Empty complete inventory is a reliable zero within the declared scope.                               |
+| `coverage: partial`     | Known records are preserved, but failed/missing/required disabled sources, discovery failures or source-cap exhaustion prevent completeness. Empty partial collections are allowed. Offered counts are **lower bounds**, not exact totals. |
+| `coverage: unknown`     | No reliable source inventory could be collected. Items must be empty and every counter zero; these zero counters are not an update-availability statement. Use partial when known records exist.                                           |
+| `coverage: unsupported` | Collection is unsupported/unselected as a whole. Items must be empty and every counter zero; this never means up to date.                                                                                                                  |
+
+All seven `counts` fields are required strict JSON integers from 0 through 4,096, and must equal the receiver-computable counts of **represented records**:
+
+| Counter       | Definition                                                                                           |
+| ------------- | ---------------------------------------------------------------------------------------------------- |
+| `total`       | Number of items, including disabled records                                                          |
+| `active`      | Items whose availability is not disabled                                                             |
+| `disabled`    | Items with availability disabled, whether excluded or required                                       |
+| `unknown`     | Items with availability unknown                                                                      |
+| `unavailable` | Items with availability unavailable                                                                  |
+| `available`   | Items with availability available, including non-installable offers and offers with unknown versions |
+| `skipped`     | Items with availability skipped; these are still offered updates                                     |
+
+`total = active + disabled`. The remaining active records after subtracting available/skipped/unknown/unavailable are up to date. **Known offered updates = available + skipped**. Do not count stale `skipped_version` metadata on an up-to-date record as an offered update. Do not add inaccessible/undiscovered sources to guessed totals. A partial record list can have internally consistent counters and still omit an unknown number of sources; coverage carries that uncertainty. The UI labels such counts “Mindestens …” and shows the export scope. A failed selected source must not block known updates from other sources, but it must prevent a complete claim.
+
+Automatically discovered disabled sources may have `required: false` in all scope and are excluded from the active completeness requirement. Explicitly selected/requested sources have `required: true`; disabled selected Core/OS or other requested sources require partial coverage. In selected scope every record must be required. Unknown/unavailable records always prevent complete coverage. The sender must not enable sources or reuse an old on-state for a disabled record.
+
+### Source records and original metadata
+
+Each item has exactly the following keys. All keys are required except `device`, which may be omitted or null; both normalize to null for hashing/storage. Each source is unique by `key`; at most one core and one os record may appear in a collection, including their non-offered states.
+
+| Field               | Type and bounds                                                                                                                                                                                                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `key`               | Stable source identifier, 1–256 lowercase ASCII characters matching `[a-z0-9][a-z0-9_.-]*`; e.g. an update entity ID                                                                                                                                                                 |
+| `name`              | Required display text, 1–256 Unicode characters                                                                                                                                                                                                                                      |
+| `category`          | `core`, `os`, `supervisor`, `addon`, `hacs`, `firmware`, `other`                                                                                                                                                                                                                     |
+| `availability`      | `available`, `skipped`, `up_to_date`, `disabled`, `unknown`, `unavailable`                                                                                                                                                                                                           |
+| `source`            | Null or integration domain: 1–64 ASCII characters matching `[a-z][a-z0-9_]*`                                                                                                                                                                                                         |
+| `device`            | Omitted/null or exactly `{id, name, manufacturer, model}`. ID is required 1–128 ASCII characters matching `[A-Za-z0-9_-]+`; each other field is null or 1–256 Unicode characters. Use an instance-local opaque device registry ID, never MAC/IP/serial numbers/hardware identifiers. |
+| `supports_install`  | Strict JSON boolean or null; true means the source exposes an install function, not authorization, reachability or guaranteed success. False means manual/external installation; null means unknown. **Never an availability filter.**                                               |
+| `installed_version` | Null or original 1–256-character Unicode version text                                                                                                                                                                                                                                |
+| `available_version` | Null or original 1–256-character Unicode version text, even when availability is available                                                                                                                                                                                           |
+| `skipped_version`   | Null or original 1–256-character Unicode text; preserved independently of the current availability                                                                                                                                                                                   |
+| `in_progress`       | Null, a strict JSON boolean, or a JSON number from 0 through 100 inclusive. True = installing, false = no active installation reported, number = reported percentage (including zero), null = unknown. No numeric strings.                                                           |
+| `disabled_by`       | Null, `user`, or `integration`. Non-null is permitted only with availability disabled; the reason may be unknown/null on a disabled record.                                                                                                                                          |
+| `required`          | Strict JSON boolean. False is permitted only for disabled records in all scope.                                                                                                                                                                                                      |
+
+Unicode text fields reject control characters (Cc), format characters (Cf) and line/paragraph separators (Zl/Zp). Empty strings are rejected; use null for unknown optional text. Slash, colon, spaces, vendor punctuation, non-ASCII characters and version prefixes/suffixes are permitted. The receiver does **not** trim, truncate, normalize Unicode, rewrite versions, infer Semver or compare versions to decide availability. Whitespace in a nonempty identifier is preserved, including leading/trailing spaces. JSON booleans/numbers are not coerced to strings. Invalid UTF-8/JSON fails at transport validation. Free text is escaped by React, not interpreted as HTML or a link.
+
+Availability is the sender's explicit HA observation. Available with null new version is still offered, with incomplete descriptive metadata. Skipped remains offered and is visibly marked. Up to date is not offered, even if old skip/version metadata remains. Disabled/unknown/unavailable are source states and never interpreted as stale available updates. An installation failure or absence of INSTALL must not erase an offered record. No install/remote-control endpoint or button is introduced.
+
+Only the allowlisted metadata may leave HA. No config entries, release URLs/notes, arbitrary attributes, credentials, MAC/IP/serial numbers or full registries. Names and raw versions can still be sensitive; senders must limit them to the agreed explicit scope and keep raw metadata out of diagnostics/logs. Laravel's existing per-instance ACL controls current and historical props, including device metadata.
+
+### Atomic acknowledgment, retries and mixed-version behavior
+
+HTTP 200 returns `{ "accepted": 1, "duplicates": 0, "received_at": "2026-11-07T10:00:01+00:00" }` only after the whole collection, receipt, metric sample and applicable state transition commit to PostgreSQL. Matching retries return accepted 0/duplicates 1. No chunk is acknowledged and no Redis-only handoff is accepted. Any invalid last item leaves the previous projection and all history/receipts unchanged.
+
+The per-instance receipt ledger, UUID lifetime and re-pair semantics are shared with v1. Generate a fresh UUID per new observation, **also across protocol versions**. V2 receipt hashes include schema version 2, normalized UUID/time, sorted object keys, normalized optional device null and all source metadata/counters/coverage/scope. Core and OS records sort first, followed by every other category by stable key. Input item/object key ordering and equivalent timezone/fractional timestamp forms do not change content identity. Altering coverage, version/device/install/skip metadata or any other content under a retained UUID returns 409. No raw full-payload copy is added to receipts.
+
+Both versions project into the same current instance state, with the incoming update shape retained. The strictly newer observation wins regardless of protocol version; an equal/late observation retains its metric sample/receipt without regressing state. A new v1 snapshot remains a v1 full replacement and may remove v2 metadata; it is never silently upgraded or enriched. A new partial/unknown v2 collection also replaces the previous update state: Laravel does not resurrect old offers for missing sources. Known partial items come from that new observation; explicitly viewing older history is separate.
+
+Every forward change to availability, metadata, coverage or counters is historized. Identical forward states add no repeated state-history entry. Skip → available → up to date is a real sequence of transitions; no backend version comparison substitutes for it. Re-pair clears current data while keeping receipt/history keys; replaying an acknowledged UUID cannot recreate current state. Credential revocation/deactivation and identity are rechecked under the same instance lock. Current/metric/history retention stays unchanged: samples/receipts 30 days, state transitions 90 days, bounded hourly cleanup; current state survives pruning. All metadata live in existing JSONB projections/history, so no schema migration is necessary.
+
+The existing error classes apply: 400 malformed JSON/root/depth; 401 invalid/revoked/disabled machine; 403 missing HTTPS or identity mismatch; 409 conflicting ID; 413 bytes exceeded; 415 content type/encoding; 422 invalid schema/counts/records/coverage; 429 quota with Retry-After; 5xx/timeout bounded retry with frozen UUID/content. Correct permanent errors instead of retrying unchanged. Never fall back to independent v1 fragments for a failed v2 upload.
+
+### Browser projection and verification
+
+Cockpit/detail share the same v1/v2 presentation. Offered records include available and skipped regardless of INSTALL. Core/OS retain priority; the remaining seven-category metadata, device/source fields, raw versions, install progress and exclusion reasons remain visible. Non-offered source states are expandable. Lists initially render 50 entries and explicitly say “n von m”; further entries can be loaded without changing the stored collection or its coverage. Partial lower bounds remain visible in summary cards, update lists and history. A complete zero is distinguished from unknown/unsupported/partial zero. Existing instance ACLs and ten-second partial refresh remain authoritative.
+
+```bash
+vendor/bin/sail artisan test --compact tests/Feature/AgentMonitoringV2Test.php tests/Feature/AgentMonitoringTest.php tests/Feature/AgentProtocolTest.php
+vendor/bin/sail npm run test:monitoring
+```
+
+These are Laravel-side fixtures, not verification of a real Shelly installation or of agent 0.2.3 sending v2. The separate sender must implement this exact contract, privacy/selection mapping and HTTPS end-to-end tests before rollout.

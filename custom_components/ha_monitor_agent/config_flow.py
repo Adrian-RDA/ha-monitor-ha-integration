@@ -37,12 +37,14 @@ from .const import (
     CONF_EXPORT_METRICS,
     CONF_INSTANCE_ID,
     CONF_MONITORING_ENABLED,
+    CONF_MONITORING_SCHEMA_VERSION,
     CONF_PAIRING_CODE,
     CONF_SERVER_URL,
     CONF_SYSTEM_UPDATES,
     CONF_UPDATE_ENTITIES,
     DOMAIN,
     METRIC_KEYS,
+    MONITORING_SCHEMA_VERSION,
 )
 
 
@@ -172,6 +174,12 @@ class AgentOptionsFlow(OptionsFlowWithReload):
                         ),
                     ): bool,
                     probatio.Required(
+                        CONF_MONITORING_SCHEMA_VERSION,
+                        default=self.config_entry.options.get(
+                            CONF_MONITORING_SCHEMA_VERSION, MONITORING_SCHEMA_VERSION
+                        ),
+                    ): probatio.In([1, 2]),
+                    probatio.Required(
                         CONF_EXPORT_METRICS,
                         default=self.config_entry.options.get(
                             CONF_EXPORT_METRICS, list(METRIC_KEYS)
@@ -198,7 +206,7 @@ class AgentOptionsFlow(OptionsFlowWithReload):
                     probatio.Required(
                         CONF_EXPORT_ALL_UPDATES,
                         default=self.config_entry.options.get(
-                            CONF_EXPORT_ALL_UPDATES, False
+                            CONF_EXPORT_ALL_UPDATES, True
                         ),
                     ): bool,
                     probatio.Required(

@@ -1,122 +1,48 @@
-# Update-Erfassung und Übergabe an Laravel
+# Update-Erfassung und Monitoring Snapshot v2
 
-Stand: Agent **0.2.3**. Der produktive Vertrag bleibt unverändert [Monitoring Snapshot v1](PROTOCOL.md#monitoring-snapshot-v1-sprint-5). Die unten beschriebene Laravel-Erweiterung ist ein **Arbeitsauftrag**, keine implementierte oder vom Agenten verwendete API.
+Stand: Integration **0.3.0**, Laravel-Vertrag aus [PROTOCOL.md](PROTOCOL.md), Abschnitt Monitoring Snapshot v2. Der v2-Empfänger ist bereits implementiert; diese Integration liefert jetzt den Sender. Pairing und Heartbeats bleiben v1. Der autoritative Protokolltext wurde für diese Implementierung nicht verändert.
 
-## Befund und Prüfumfang
+## Vier gemeldete verfügbare Updates
 
-Im bisherigen Collector gab es keinen Filter auf `UpdateEntityFeature.INSTALL`. Die Unterscheidung wird jetzt ausdrücklich durch Tests mit echten HA-`UpdateEntity`-Instanzen abgesichert: `state = on` bedeutet verfügbar, auch bei `supported_features = 0`. Das INSTALL-Bit beschreibt lediglich die angebotene Installationsfunktion; Berechtigungen, Erreichbarkeit und ein erfolgreicher Installationsversuch folgen daraus nicht.
+Der Regressionstest `test_default_upgrade_sends_all_four_raw_versions_and_metadata` verwendet echte HA-Registries, die gemeldeten Entity-IDs und einen simulierten HTTPS-Empfänger. Ein bestehender Eintrag ohne neue Optionen sendet standardmäßig v2 und alle entdeckten Quellen, sobald Monitoring aktiviert ist.
 
-Drei reproduzierbare Lücken wurden im Agenten gefunden:
-
-1. Außer Core/OS wurden nur manuell ausgewählte Entitäten überwacht. Nicht ausgewählte Shelly-, HACS-, App- oder andere Updates fehlten daher unabhängig von ihrer Installierbarkeit.
-2. Die Versionsprüfung lief auch für `off`-Entitäten, die gar kein Update anzubieten hatten. Eine aktuelle Shelly-Entität mit einer Rohkennung wie `20241011-123000/v1.14.1-g1234567` konnte deshalb die gesamte Liste sperren. Jetzt werden nur tatsächlich angebotene Records auf v1-Darstellbarkeit geprüft.
-3. Unvollständige Erfassung und v1-Kompatibilitätsfehler waren lokal kaum unterscheidbar. Das vollständige lokale Inventar sowie strukturierte, bereinigte Fehlerzähler bleiben jetzt erhalten.
-
-Eine angebotene Firmware mit `/` in der Versionskennung ist weiterhin **nicht verlustfrei durch v1 übertragbar**. V1 erlaubt dort nur `[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}`. Ein einziges nicht darstellbares angebotenes Update innerhalb des gewählten Exportumfangs, eine dort fehlende Quelle oder mehr als 100 dort angebotene Updates erfordert laut Vertrag `unavailable` mit leerer Liste. Die lokale Erfassung erkennt die bekannten Updates trotzdem. Versionen werden weder gekürzt noch in vermeintliche Semver-Versionen umgeschrieben. Bekannte installierte Rohversionen werden nicht zu null umgedeutet, um die Validierung zu umgehen.
-
-Der komplette HA-Pfad einschließlich TLS-Payload, Bestätigung und simulierter Speicherung wurde getestet. Laravel-Quellcode, reale Datenbank und produktive Darstellung liegen außerhalb dieses Repositorys und wurden **nicht** gelesen oder verändert. Die folgenden Laravel-Prüfungen sind deshalb konkret aus dem bestehenden Vertrag abgeleitete Aufgaben, keine behaupteten Befunde im Laravel-Code.
-
-## Regression in 0.2.1 und Korrektur in 0.2.2
-
-0.2.1 koppelte die automatische lokale Vollerfassung unmittelbar an den v1-Export. Damit erweiterte die neue Standardeinstellung den bisherigen Exportumfang: Eine fremde unbekannte, verwaiste oder inkompatible Quelle konnte einen gültigen Core/OS-/App-/Gerätebestand durch `unavailable`/`[]` ersetzen. Die vorherigen Tests sicherten zwar die strikte v1-Regel, aber nicht den Erhalt der zuvor ausdrücklich gewählten Quellen bei neu gefundenen Problemquellen.
-
-0.2.2 trennt beides. Lokale Vollerfassung bleibt erhalten; der Standardexport umfasst wieder Core/OS plus die explizite zusätzliche Auswahl. Das ist eine konfigurierte Abgrenzung und kein Filtern einer fehlgeschlagenen Quelle aus einem als vollständig behaupteten Export. Wer bewusst die Übertragung aller Fundstellen aktiviert, erhält weiter die strikte Vollständigkeitssemantik. Eine fehlerhafte **gewählte** Quelle sperrt die gewählte Sammlung nach wie vor. Die bereits dokumentierte Laravel-Erweiterung bleibt nötig, um beliebige Rohversionen und bekannte Teilbestände darzustellen.
-
-Regressionstests prüfen über den echten TLS-Client, dass Core, OS und ausgewählte App-/HACS-/Geräteupdates trotz einer nicht gewählten `unknown`-, `unavailable`-, Registry-ohne-State- oder inkompatiblen Firmwarequelle ankommen. Weitere Tests sichern Opt-in, bestehende gespeicherte Optionen, Reparaturhinweise und die Isolation unerwarteter Erfassungsfehler ab. Die produktive HA-Diagnose wurde nicht ausgelesen; der Mechanismus wurde im Repository reproduziert.
-
-## Prüfung der gemeldeten Konfiguration in 0.2.3
-
-Die vom Betreiber per HA Privat geprüften vier angebotenen Updates wurden als Regression übernommen. Mit `discover_updates=true`, `system_updates=true`, `export_all_updates=false`, `update_entities=[]` ist allein Core/OS zum Export freigegeben. In der Testkonstellation ist OS aktuell: lokal werden vier angebotene Updates gefunden, im Payload steht nur das Core-Update. Die fehlenden drei sind in dieser Konfiguration eine Folge der Exportauswahl, kein INSTALL-Filter.
-
-Für alle vier entweder **Alle gefundenen Update-Quellen übertragen** aktivieren oder Shelly, Immich und Proxmox ausdrücklich zur zusätzlichen Übertragung auswählen. Der Agent ändert keine laufenden HA-Einstellungen selbst. Die Regression prüft beide Wege über den realen, verifizierten HTTPS-Testclient bis zur simulierten Backend-Speicherung. Ab 0.2.3 setzt die Export-all-Option außerdem eine vorher deaktivierte lokale Suchoption für diesen Erfassungszweck außer Kraft; ein eingeschalteter Gesamtexport darf nicht auf einer unvollständigen lokalen Auswahl basieren.
-
-| Quelle | `supported_features` | INSTALL vorhanden | Verfügbare Quelle exportieren |
+| Quelle | Kategorie | Beispielversion | INSTALL |
 | --- | --- | --- | --- |
-| Home Assistant Core | 15 | ja (`15 & 1`) | ja |
-| Shelly-Firmware | 5 | ja (`5 & 1`) | ja |
-| Immich | 0 | nein | ja |
-| Proxmox VE | 16 (Release Notes) | nein | ja |
+| Home Assistant Core | `core` | `2026.11.1` | vorhanden |
+| Shelly Carport-Licht | `firmware` | `20261101-160000/v1.15.0-gabcdef0` | vorhanden |
+| Immich | `other` | `v2.3.1` | fehlt; wird trotzdem übertragen |
+| Proxmox | `other` | `8.4.1-p0-d17` | fehlt; wird trotzdem übertragen |
 
-`supports_install` bleibt ein Metadatum. Titel, Installationsfunktion und semantische Versionssortierung sind keine Zulassungskriterien für eine `on`-Entität. Die Wire-Anzeige verwendet wie bisher feste Core/OS-Namen bzw. eine ausgewählte Entity-ID; `title` darf fehlen oder null sein. Die Tests verwenden kontrollierte, v1-kompatible Versionen, darunter `v2.3.1` und eine Proxmox-artige Kennung wie `8.4.1-p0-d17`. Die tatsächlichen Versionskennungen der Installation wurden nicht mitgeteilt oder abgefragt. Freie Herstellerkennungen außerhalb der bestehenden v1-Syntax werden lokal unverändert erhalten und weiterhin als nicht übertragbar gemeldet.
+Die OS-Quelle wird ebenfalls übertragen, auch wenn sie bereits aktuell ist. Die Sammlung enthält deshalb fünf Quellen und **vier verfügbare Updates**. Versionskennungen einschließlich Leerzeichen, Präfixen, Slash, Doppelpunkt und Unicode bleiben unverändert. Der Agent leitet Verfügbarkeit aus HA ab und vergleicht keine Versionen. Außerdem bleiben `supervisor`, `addon` und `hacs` als eigene Kategorien erhalten.
 
-Eine fehlende Fehlergrenze je `_observe()`-Aufruf wurde ergänzt. Ein Fehler einer Entität kann die Erfassung anderer Quellen jetzt weder vorzeitig abbrechen noch bereits erfolgreiche Beobachtungen verwerfen. Ein neutraler, nicht verfügbarer Fehlerrecord bleibt im Inventar, damit seine Quelle nicht als aktuell oder unbemerkt verschwunden gilt. Ausnahmeinhalte werden nicht protokolliert. Diagnosezähler `failed`, `known_available`, `export_item_count` und `blocked_known_available` unterscheiden lokale Teilerkenntnis von tatsächlich enthaltenen Wire-Items. Fehler einer nicht zum Export gewählten Quelle beeinflussen den getrennten gewählten Export nicht.
+## Umfang, Vollständigkeit und Metadaten
 
-**Grenze der Fehlerisolierung:** Für den Export einer gewählten vollständigen Sammlung bleibt der dokumentierte v1-Vertrag bindend. Eine fehlerhafte **gewählte** Quelle erzwingt `unavailable`/`[]`; eine bekannte Teilmenge als vollständige Liste zu übertragen wäre falsch. Ein aktualisierter implementierter Vertrag für Teilbestände liegt im Repository nicht vor. Die Anforderung „eine fehlerhafte Quelle darf niemals andere Updates im HTTP-Export blockieren“ bleibt deshalb eine erforderliche Backend-/Vertragserweiterung. Die darunter dokumentierten v2-Aufgaben bleiben offen; 0.2.3 behauptet keine Erfüllung dieser Wire-Anforderung.
+- `export_all_updates` ist standardmäßig true; ein explizit gespeichertes false bleibt erhalten. `discover_updates: false` verhindert die für Export-all erforderliche Suche nicht. Die Übertragung selbst bleibt über `monitoring_enabled` separat aktivierbar und zunächst aus.
+- `scope: all` erfasst aktive, versteckte und deaktivierte bekannte Quellen. Bei `selected` werden ausschließlich gewählte Quellen und angeforderte Core/OS-Quellen erfasst; alle Datensätze sind erforderlich.
+- Automatisch gefundene deaktivierte Quellen sind nicht erforderlich. Ausgewählte deaktivierte Quellen, fehlende Quellen, unbekannte/nicht verfügbare Zustände, Erfassungsfehler oder Überschreiten der Erfassungsgrenze führen zu `partial`. Gültige Angebote anderer Quellen werden weiter übertragen. Teil-Anzahlen sind Untergrenzen.
+- Keine zuverlässige Erfassung ergibt `unknown`, eine insgesamt nicht gewählte Erfassung `unsupported`. Deren leere Listen und Nullzähler behaupten keine aktuelle Installation. Eine zuverlässig leere Suche im Scope all ergibt `complete`.
+- Nur aktuell übersprungene Versionen bleiben angebotene Updates. `available + skipped` ist die Zahl bekannter Angebote; alte Skip-Metadaten bei `up_to_date` zählen nicht mit.
+- Der Payload enthält pro Quelle ausschließlich Schlüssel, Name, Kategorie, Verfügbarkeit, Integration, freigegebene Gerätefelder, Installationsfähigkeit, Originalversionen, Skip, Fortschritt, Deaktivierungsgrund und Erforderlichkeit. Geräte-IDs stammen aus der lokalen Device Registry. Hardwarekennungen, Seriennummern, IP/MAC, Release-URLs/-Texte und beliebige Attribute werden nicht exportiert.
+- Ungültige optionale Texte werden ohne Umschreiben oder Abschneiden durch null ersetzt und mit festen lokalen Fehlercodes angezeigt. Die gültigen Quellen bleiben erhalten. Rohtexte erscheinen nicht in Logs, Diagnosen oder Sensorattributen.
 
-## Aktueller Datenweg
+## Große Sammlungen und Wiederholungen
 
-1. `updates.collect_update_inventory()` liest einmal je Erfassungszyklus die HA-Zustände und Registries, ohne Netzwerkabfragen oder Installationsaktionen.
-2. Automatische Erfassung berücksichtigt aktive und versteckte `update.*`-Entitäten einschließlich nicht installierbarer Updates, ergänzt um Registry-Einträge zur Erkennung von deaktivierten oder fehlenden Quellen. Die lokale Erfassung ist standardmäßig an. Der Exportumfang wird davon getrennt bestimmt: Core/OS und manuell gewählte weitere Quellen werden standardmäßig übertragen. Erst die neue explizite Option `export_all_updates` erweitert den Exportumfang auf alle lokal erfassten Quellen; alte gespeicherte `discover_updates`-Werte lösen das nicht aus. Core/OS können separat ausgenommen werden. Höchstens 4.096 Quellen werden lokal verarbeitet; Überschreitung meldet `source_limit` statt eines vollständigen Teilergebnisses.
-3. `MonitoringCoordinator.update_inventory` hält unveränderliche Beobachtungen gemeinsam mit dem zugehörigen Snapshot. Pro Quelle bleiben ausschließlich ausgewählte Felder bis jeweils 256 Zeichen erhalten: Entity-ID, Name, Kategorie, Integration (`source`), lokale Device-ID, Gerätename/Hersteller/Modell, installierte/neue/übersprungene Version, `supports_install`, Installationsfortschritt, deaktiviert-durch und Verfügbarkeitszustand. Unlesbare/zu große Versionsfelder werden als nicht darstellbar gemeldet. Release-URLs, Release Notes, Config-Entry-Daten und Gerätekennungen wie MAC/IP werden nicht übernommen.
-4. `MonitoringCoordinator.export_update_inventory` wird standardmäßig separat für die gewählten Quellen erfasst; eine nicht gewählte unbekannte Quelle oder ein unerwarteter Fehler bei der lokalen Vollerfassung beeinträchtigt diese Erfassung nicht. Bei expliziter Übertragung aller Quellen wird das lokale Inventar auch als Exportinventar verwendet. `UpdateInventory.as_protocol()` erzeugt für diesen Exportumfang ausschließlich die fünf erlaubten v1-Itemfelder. Kategorien Core/OS bleiben priorisiert; Supervisor, Apps/Add-ons, HACS, Firmware und sonstige Updates werden als `other` übertragen. Quell-/Gerätemetadaten und Installierbarkeit bleiben bis zur Vertragserweiterung lokal im Runtime-Inventar, nicht im HTTP-Payload.
-5. `MonitoringUploader` friert diesen Snapshot mit UUID und Beobachtungszeit ein. Wiederholungen behalten Inhalt, ID und Zeitpunkt. HTTPS bleibt verifiziert, Redirects bleiben gesperrt, Heartbeats bleiben unabhängig.
-6. Der dokumentierte Laravel-Empfänger validiert den kompletten Snapshot und aktualisiert `monitoring_currents`, `monitoring_samples`, `monitoring_state_changes` und `monitoring_receipts`. Die Frontend-Projektion darf Verfügbarkeit nicht nach Installierbarkeit filtern und `unavailable` niemals als null verfügbare Updates darstellen.
+V2 verwendet **einen atomaren Request** mit genau einem Snapshot, höchstens 4.096 Quellen und 2.097.152 unkomprimierten serialisierten Bytes einschließlich aller Metadaten und Envelope. Es gibt keine Chunk-Staging-API. Tests übertragen 101 und 4.096 verfügbare Updates, auch mit mehr als 64 KiB, über dieselbe Route. Verlorene Bestätigungen wiederholen unveränderte Snapshot-UUID, Beobachtungszeit und Inhalt. Die simulierte Datenbank quittiert den Retry als Duplikat; neue Beobachtungen erhalten neue UUIDs.
 
-## Fachliche Zustände
+Die Erfassung hält bei mehr als 4.096 Quellen eine ausdrücklich teilweise Sammlung. Eine Überschreitung der **Transport-Bytegrenze** stoppt dagegen den Upload mit Reparaturhinweis und erhält den vorherigen Serverstand. Es werden keine unabhängig ersetzenden Fragmente und keine leere Ersatzliste gesendet. Neue Messungen laufen lokal weiter. Monitoring hält maximal zwei eingefrorene Beobachtungen; JSON-Serialisierung findet im HA-Executor statt. Ein Request gleichzeitig und mindestens 15 Sekunden zwischen Versuchen begrenzen die Rate. Retry-After, Backoff und Ablauf der Beobachtungen werden geprüft.
 
-| HA-Quelle | Lokales Ergebnis | Behandlung |
-| --- | --- | --- |
-| `on`, INSTALL gesetzt | `available`, `supports_install: true` | Verfügbar; wird bei v1-kompatiblen Metadaten übertragen. |
-| `on`, INSTALL nicht gesetzt | `available`, `supports_install: false` | Ebenfalls verfügbar; externe/manuelle Installation darf die Anzeige nicht unterdrücken. Andere Feature-Bits ohne INSTALL ändern das nicht. |
-| Features fehlen/ungültig | `supports_install: null` | Fähigkeit unbekannt; kein Filter auf Verfügbarkeit. |
-| `off`, `skipped_version == latest_version`, installiert ungleich neu | `skipped` | Weiterhin angeboten, aber ausdrücklich übersprungen; v1 kann dieses Kennzeichen nicht übertragen. |
-| `off`, keine aktuell übersprungene Version | `up_to_date` | HA-Aussage übernehmen; keine eigene Versionssortierung. Veraltete Skip-Metadaten allein erzeugen kein Update. |
-| Registry-Eintrag deaktiviert | `disabled` | Nicht einschalten, keinen veralteten `on`-Zustand verwenden. Automatisch gefundene deaktivierte Quellen sind aus der aktiven Abdeckung ausgenommen. Explizit ausgewählte bzw. angeforderte Core/OS-Quellen machen die Abdeckung unvollständig. |
-| Zustand fehlt/`unavailable` | `unavailable` | Keine erfundene Update-Aussage, auch wenn alte Versionen bekannt sind. Bekannte Updates anderer Quellen bleiben lokal erhalten; v1 darf keine Teilmenge übertragen. |
-| `unknown`/anderer Zustand | `unknown` | Abdeckung unvollständig. |
+## V1 und Betrieb
 
-Deaktivierte Entitäten liefern keine verlässliche neue Versionsbeobachtung. Insbesondere sind manche Shelly-Update-Entitäten laut offizieller HA-Integration standardmäßig deaktiviert. Ohne sie durch den Betreiber zu aktivieren oder eine separat vereinbarte native Datenquelle einzuführen, kann der Agent keine verfügbaren Updates dieser Geräte behaupten. Ebenso kann er keine Updates finden, die HA überhaupt nicht als Quelle bereitstellt. Versteckte, aber aktive Entitäten werden dagegen berücksichtigt.
+`monitoring_schema_version: 1` bleibt ausdrücklich wählbar. Dieser Modus sendet unverändert Snapshot v1 an `/api/v1/agents/monitoring`: höchstens 100 angebotene Updates, 65.536 Bytes und eingeschränkte Versionssyntax. Nicht darstellbare angebotene Versionen oder eine fehlerhafte ausgewählte Quelle machen die gesamte v1-Update-Liste nicht verfügbar. Rohversionen werden niemals für v1 umgeschrieben. V2-Fehler lösen keinen automatischen Rückfall aus. Pairing, gespeicherte Zugangsdaten, Heartbeats und Reauthentifizierung benötigen keine Migration.
 
-Der optionale lokale Sensor **Verfügbare Updates** zählt bekannte angebotene Updates einschließlich aktuell übersprungener Versionen, solange die lokale Abdeckung vollständig ist. Seine Attribute bzw. die Integrationsdiagnose enthalten nur Zähler und feste Fehlercodes: `pending`, `skipped`, `disabled`, `unavailable`, `not_installable`, `installability_unknown`, `known_available`, `protocol_status`, `protocol_issues`. Zusätzlich zeigen `export_scope`, `export_sources`, `export_known_available`, `export_item_count` (Anzahl Wire-Items), `blocked_known_available` (durch den Vertrag zurückgehaltene bekannte Updates) und `not_exported` den tatsächlichen Exportumfang; `local_protocol_issues` beschreibt Probleme des vollständigen lokalen Bestands. `protocol_status` und `protocol_issues` beziehen sich dagegen auf die tatsächlich übertragene Sammlung. Bei unvollständiger Abdeckung wird der Sensor nicht verfügbar; `known_available` zeigt in der Integrationsdiagnose weiterhin die bekannte Untergrenze. Home Assistant blendet zusätzliche Sensorattribute im nicht verfügbaren Zustand aus. Ein lokaler Wert kann größer als die zur Übertragung gewählte Sammlung sein oder wegen einer inkompatiblen gewählten Quelle nicht übertragbar sein. Reale Auslassungen bekannter Updates und blockierte gewählte Sammlungen erzeugen zusätzlich einen Hinweis unter Einstellungen → System → Reparaturen. So ist die Eingrenzung sichtbar, ohne unbekannte Quellen als aktuell auszugeben. Keine Rohmetadaten werden in Logs, Diagnosen oder Entity-Attributen ausgegeben. Diagnosedaten lassen sich normalerweise unter Einstellungen → Geräte & Dienste → HA Monitor → ⋮ → Diagnosedaten herunterladen abrufen. Die relevanten Zähler stehen in `monitoring.updates`.
+Produktiver Abnahmetest: Integration auf dem HA-Testsystem aktualisieren und neu laden, Monitoring einschalten, Protokoll 2 und Export-all prüfen. In Laravel vier Angebote, die unveränderten Rohversionen und die beiden nicht direkt installierbaren Quellen kontrollieren. Explizit zuvor gespeicherte Export-Einschränkungen müssen bewusst erweitert werden. Danach eine zusätzliche ausgewählte Quelle vorübergehend deaktivieren: Laravel soll `partial` und die übrigen vier Angebote anzeigen. Skip/Unskip/Installation, Wiederholung nach Verbindungsunterbrechung und unabhängige Heartbeats prüfen. Ein HTTPS-Reverse-Proxy muss die dokumentierte v2-Bodygröße erlauben; die Integration ändert keine Infrastruktur.
 
-## Konkrete Aufgaben im Laravel-Repository
-
-### Sofort gegen das bestehende v1 prüfen
-
-- Einen akzeptierten Snapshot mit mindestens zwei `other`-Items kontrollieren, die von HA ohne INSTALL-Fähigkeit als `on` gemeldet werden. In v1 gibt es **gar kein** Installierbarkeitsfeld: Empfänger, aktuelle Projektion, ACL-geprüfte Page-Props und UI dürfen keine Installierbarkeit anhand von Name, Integration oder Produkttyp hineininterpretieren.
-- Von Request-Validierung über Receipt/Transaktion bis zu `monitoring_currents` und Frontend alle Itemschlüssel vergleichen. Ungewöhnliche Produktnamen, Gerätefirmware und HACS dürfen nicht aus `other` herausgefiltert werden. Darstellungsgrenzen müssen kenntlich sein; eine gekürzte Liste ist kein vollständiger Gesamtbestand.
-- `status != ok` als „Update-Situation unbekannt/nicht verfügbar“ anzeigen; eine leere Liste in diesem Fall ist keine Aussage „aktuell“. V1 ist eine vollständige Ersetzung und löscht vorherige bekannte Items bei einem neuen nicht verfügbaren Zustand. Alte Werte dürfen nur ausdrücklich als letzter bekannter Stand gezeigt werden.
-- Reihenfolge Core, OS, weitere nach stabilem Schlüssel prüfen. Snapshot-Reihenfolge, Deduplizierung und Re-Pairing dürfen keine alte Version als neue Beobachtung erscheinen lassen.
-- Mindestens eine reale fehlende Shelly-Quelle mit Agent-Diagnose abgleichen: entdeckt/aktiv, `on`, gültige installierte/neue v1-Version, vollständige Abdeckung, tatsächlich akzeptierte Snapshot-ID. Wenn der Collector bereits `unavailable` sendet, kann die UI keine verlorenen Einzelitems aus diesem Snapshot rekonstruieren.
-
-### Erforderliche kompatibel versionierte Erweiterung
-
-Das bestehende v1-Schema darf nicht stillschweigend erweitert werden. Für verlustfreie Firmware-/Metadatenübertragung ist ein eigener **Monitoring Snapshot v2** mit separatem Endpoint, zum Beispiel `POST /api/v2/agents/monitoring`, festzulegen und zuerst im Backend zu implementieren. Der aktuelle Agent sendet ausschließlich v1; es gibt keinen automatischen Versions-Fallback.
-
-Der neue Vertrag benötigt mindestens:
-
-| Feld | Festzulegende Semantik |
-| --- | --- |
-| `updates.coverage` | `complete`, `partial`, `unknown`, `unsupported`; partielle bekannte Items müssen erlaubt und als Teilmenge sichtbar sein. |
-| Item `availability` | `available`, `skipped`, `up_to_date`, `disabled`, `unknown`, `unavailable`; nicht aus einem Versionsvergleich im Backend ableiten. |
-| Item `supports_install` | Striktes Boolean oder null; nur die Installationsfunktion betrifft dies, niemals das Vorhandensein eines Updates. |
-| Item `installed_version`, `available_version`, `skipped_version` | Originale Kennungen als begrenzte Unicode-Texte bis 256 Zeichen ohne Unicode-Control-/Formatzeichen, nullable nach klarer Bedeutung. `/` und andere übliche Herstellerformate zulassen; keine serverseitige Semver-Erzwingung. Eine `on`-Aussage mit unbekannter Versionskennung bleibt als verfügbare, unvollständig beschriebene Quelle sichtbar. |
-| Item `source` | Integration-Domain oder null; keine Config-Entry-Daten oder Zugangsdaten. |
-| Item `category` | `core`, `os`, `supervisor`, `addon`, `hacs`, `firmware`, `other`; keine Prioritätsentscheidung anhand eines frei wählbaren Namens. |
-| Item `device` | Optionales Objekt mit instanzlokaler Device-ID, Name, Hersteller, Modell; keine MAC/IP/Seriennummern oder vollständigen Registry-Einträge. Zugriff und Ausgabe wie andere Instanzdaten per ACL schützen. |
-| Item `in_progress`, `disabled_by` | Explizite Typen und Zustände, keine beliebigen Fehlertexte. |
-| Abdeckungszähler | Aktive, deaktivierte, unbekannte Quellen und bekannte verfügbare/übersprungene Updates konsistent validieren; keine Behauptung eines exakten Gesamtwerts bei `partial`. |
-
-Für größere Inventare muss außerdem **vor Implementierung** die Übertragung vollständiger Sammlungen oberhalb von 100 Items bzw. 65.536 Bytes versioniert vereinbart werden. Ein konkreter Ansatz ist eine begrenzte chunkweise v2-Sammlung mit `collection_id`, `observed_at`, `chunk_index`, `chunk_count` und unveränderlichen Chunk-IDs/Inhalten. Das Backend veröffentlicht sie erst nach vollständigem Eingang aller Teile atomar, begrenzt Anzahl/Bytes/TTL unvollständiger Sammlungen und dedupliziert identische Wiederholungen; widersprüchliche Inhalte derselben ID bleiben ein Konflikt. Ohne diese Erweiterung darf ein Agent ein großes Inventar nicht auf mehrere voneinander unabhängig ersetzende v1-Snapshots aufteilen.
-
-Datenbank/Projektion erweitern: genannte Metadaten und Abdeckung erhalten; Normalisierung und Receipt-Hashes um die neuen Felder erweitern; Statusübergänge einschließlich übersprungen/erneut angeboten/aktuell/nicht verfügbar historisieren. Die API-Resource/Page-Props müssen die Felder durchreichen. Frontend: verfügbare Updates unabhängig von `supports_install` listen; „manuell/extern installieren“ separat kennzeichnen, übersprungene Updates kenntlich machen und bei Bedarf aufklappbar gruppieren; deaktivierte/unbekannte Quellen als Abdeckungslücke zeigen. Ein Installationsbutton darf nur aus einer separat autorisierten Funktion entstehen – HA Monitor führt derzeit keine Installationsaktionen aus.
-
-### Gemeinsame Abnahmetests
-
-1. Core + OS + Supervisor + App + HACS + mehrere Shelly-Firmwareupdates + zwei `on`-Updates ohne INSTALL werden erkannt. Im kompatiblen v1-Fall alle Schlüssel über TLS, Speicherung und UI vergleichen.
-2. Reale Shelly-Rohversion mit `/`: lokal exakt erhalten; v1 ausdrücklich nicht verfügbar; nach v2-Einführung exakt speichern und escaped rendern.
-3. `off`-Shelly ohne angebotenes Update mit derselben Rohversionskennung darf andere kompatible angebotene Updates nicht blockieren.
-4. Aktuelle übersprungene Version, danach aufgehobener Skip, danach installiert: fachliche Übergänge und Zähler prüfen. Ein veralteter Skip darf kein neues Update erzeugen.
-5. Deaktivierte/versteckte/fehlende/nicht verfügbare Quelle: keine automatische Aktivierung, keine alte `on`-Beobachtung als aktuell ausgeben, bekannte Teilmenge nicht als vollständig darstellen.
-6. Mehr als 100 Quellen, aber nur ein verfügbares Update: v1 funktioniert. Mehr als 100 angebotene Updates: v1 ausdrücklich nicht verfügbar; v2 später vollständige atomare Zusammensetzung testen.
-7. Verlorene Bestätigung, Retry, Re-Pairing, verspätete Snapshots, Quoten sowie ACLs und HTML-Escaping von Geräte-/Versionsnamen testen. Heartbeats dürfen durch Update-Probleme nicht beeinträchtigt werden.
+Automatisierte Tests ersetzen keinen Hardware-/Live-Laravel-Abnahmetest. Es wurde ausschließlich in diesem Repository gearbeitet; kein Commit und keine Veröffentlichung erfolgen automatisch.
 
 ## Offizielle Grundlagen
 
 - [HA Update-Entität und Features](https://contributors.home-assistant.io/core/entities/update/)
-- [HA State-/Skip-Semantik](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/update/entity.py)
+- [HA State-/Skip-/Fortschrittssemantik](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/update/entity.py)
 - [Immich ohne Installationsfunktion](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/immich/update.py)
-- [Proxmox-Update-Entität mit Release-Notes-Fähigkeit](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/proxmoxve/update.py)
-- [Shelly-Update-Implementierung und Firmwarekennungen](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/shelly/update.py)
-
-Es wurde kein HA-Quellcode übernommen. Die Änderungen bleiben in diesem Repository; Laravel und Infrastruktur wurden nicht verändert.
+- [Proxmox-Update-Entität](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/proxmoxve/update.py)
+- [Shelly-Firmwarekennungen](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/shelly/update.py)

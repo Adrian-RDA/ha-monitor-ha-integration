@@ -6,6 +6,7 @@ from datetime import timedelta
 import math
 import re
 import ssl
+import unicodedata
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
@@ -17,6 +18,129 @@ from pytest_homeassistant.common import MockConfigEntry
 import trustme
 
 from custom_components.ha_monitor_agent.const import DOMAIN
+
+
+def validate_updates_v2(updates):
+    """Independent receiver-side contract checks; no integration validators used."""
+    assert set(updates) == {"coverage", "scope", "counts", "items"}
+    coverage, scope = updates["coverage"], updates["scope"]
+    assert coverage in {"complete", "partial", "unknown", "unsupported"}
+    assert scope in {"all", "selected"}
+    items = updates["items"]
+    assert len(items) <= 4096
+    counts = updates["counts"]
+    assert set(counts) == {
+        "total",
+        "active",
+        "disabled",
+        "unknown",
+        "unavailable",
+        "available",
+        "skipped",
+    }
+    assert all(type(value) is int and 0 <= value <= 4096 for value in counts.values())
+    assert counts["total"] == len(items)
+    for state in ("disabled", "unknown", "unavailable", "available", "skipped"):
+        assert counts[state] == sum(item["availability"] == state for item in items)
+    assert counts["active"] == len(items) - counts["disabled"]
+    if coverage in {"unknown", "unsupported"}:
+        assert not items and not any(counts.values())
+
+    def text(value, nullable=False):
+        if nullable and value is None:
+            return
+        assert isinstance(value, str) and 1 <= len(value) <= 256
+        assert not any(
+            unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp", "Cs"}
+            for char in value
+        )
+
+    keys, products = set(), set()
+    for item in items:
+        assert set(item) in (
+            {
+                "key",
+                "name",
+                "category",
+                "availability",
+                "source",
+                "supports_install",
+                "installed_version",
+                "available_version",
+                "skipped_version",
+                "in_progress",
+                "disabled_by",
+                "required",
+            },
+            {
+                "key",
+                "name",
+                "category",
+                "availability",
+                "source",
+                "device",
+                "supports_install",
+                "installed_version",
+                "available_version",
+                "skipped_version",
+                "in_progress",
+                "disabled_by",
+                "required",
+            },
+        )
+        assert re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,255}", item["key"])
+        assert item["key"] not in keys
+        keys.add(item["key"])
+        assert item["category"] in {
+            "core",
+            "os",
+            "supervisor",
+            "addon",
+            "hacs",
+            "firmware",
+            "other",
+        }
+        if item["category"] in {"core", "os"}:
+            assert item["category"] not in products
+            products.add(item["category"])
+        assert item["availability"] in {
+            "available",
+            "skipped",
+            "up_to_date",
+            "disabled",
+            "unknown",
+            "unavailable",
+        }
+        assert item["source"] is None or re.fullmatch(
+            r"[a-z][a-z0-9_]{0,63}", item["source"]
+        )
+        text(item["name"])
+        for field in ("installed_version", "available_version", "skipped_version"):
+            text(item[field], nullable=True)
+        assert (
+            item["supports_install"] is None or type(item["supports_install"]) is bool
+        )
+        progress = item["in_progress"]
+        assert (
+            progress is None
+            or type(progress) is bool
+            or type(progress) in {int, float}
+            and math.isfinite(progress)
+            and 0 <= progress <= 100
+        )
+        assert item["disabled_by"] in {None, "user", "integration"}
+        assert item["disabled_by"] is None or item["availability"] == "disabled"
+        assert type(item["required"]) is bool
+        assert item["required"] or scope == "all" and item["availability"] == "disabled"
+        if coverage == "complete":
+            assert item["availability"] not in {"unknown", "unavailable"}
+            assert item["availability"] != "disabled" or not item["required"]
+        device = item.get("device")
+        if device is not None:
+            assert set(device) == {"id", "name", "manufacturer", "model"}
+            assert re.fullmatch(r"[A-Za-z0-9_-]{1,128}", device["id"])
+            for field in ("name", "manufacturer", "model"):
+                text(device[field], nullable=True)
 
 
 class LaravelBackend:
@@ -153,7 +277,8 @@ class LaravelBackend:
         )
 
     async def monitoring(self, request):
-        """Validate the full Snapshot v1 schema independently of ingest."""
+        """Validate both snapshot contracts independently of ingest and senders."""
+        version = 2 if request.path == "/api/v2/agents/monitoring" else 1
         raw = await request.read()
         payload = await request.json()
         self.monitoring_requests.append((payload, dict(request.headers), len(raw)))
@@ -164,19 +289,22 @@ class LaravelBackend:
             return self.monitoring_responses.popleft()
         assert request.secure and request.content_type == "application/json"
         assert "Content-Encoding" not in request.headers
-        assert len(raw) <= 65536
+        assert len(raw) <= (2_097_152 if version == 2 else 65536)
         if (
             self.revoked
             or request.headers.get("Authorization") != f"Bearer {self.token}"
         ):
             return web.json_response({}, status=401)
         assert set(payload) == {"schema_version", "instance_id", "sent_at", "snapshots"}
-        assert type(payload["schema_version"]) is int and payload["schema_version"] == 1
+        assert (
+            type(payload["schema_version"]) is int
+            and payload["schema_version"] == version
+        )
         assert payload["instance_id"] == self.instance_id
         sent = dt_util.parse_datetime(payload["sent_at"])
         assert sent is not None and sent.tzinfo is not None
         assert sent <= dt_util.utcnow() + timedelta(minutes=5)
-        assert 1 <= len(payload["snapshots"]) <= 20
+        assert 1 <= len(payload["snapshots"]) <= (1 if version == 2 else 20)
         ids = set()
         for snapshot in payload["snapshots"]:
             assert set(snapshot) == {
@@ -238,6 +366,14 @@ class LaravelBackend:
                         assert value["scope"] in allowed | {None}
                         assert value["status"] != "ok" or value["scope"] is not None
             updates = snapshot["updates"]
+            if version == 2:
+                validate_updates_v2(updates)
+                if (
+                    key in self.monitoring_stored
+                    and self.monitoring_stored[key] != snapshot
+                ):
+                    return web.json_response({}, status=409)
+                continue
             assert set(updates) == {"status", "items"}
             assert updates["status"] in {"ok", "unknown", "unavailable", "unsupported"}
             assert len(updates["items"]) <= 100
@@ -300,10 +436,11 @@ async def backend(hass, socket_enabled):
     cert.configure_cert(server_context)
     client_context = ssl.create_default_context()
     ca.configure_trust(client_context)
-    app = web.Application()
+    app = web.Application(client_max_size=2_097_153)
     app.router.add_post("/api/v1/agents/pair", backend.pair)
     app.router.add_post("/api/v1/agents/ingest", backend.ingest)
     app.router.add_post("/api/v1/agents/monitoring", backend.monitoring)
+    app.router.add_post("/api/v2/agents/monitoring", backend.monitoring)
     server = TestServer(app, scheme="https")
     await server.start_server(ssl=server_context)
     backend.url = str(server.make_url("/")).rstrip("/")

@@ -346,7 +346,12 @@ async def test_local_count_and_coverage_remain_visible_when_v1_cannot_send_versi
         friendly_name=backend.token,
     )
     hass.config_entries.async_update_entry(
-        entry, options={"enabled": False, "export_all_updates": True}
+        entry,
+        options={
+            "enabled": False,
+            "export_all_updates": True,
+            "monitoring_schema_version": 1,
+        },
     )
     assert await hass.config_entries.async_setup(entry.entry_id)
     monitor = entry.runtime_data.monitoring
@@ -559,7 +564,9 @@ async def test_remove_cleans_update_export_repair(hass, backend, entry):
     from custom_components.ha_monitor_agent.const import DOMAIN
 
     source(hass, "update.unselected")
-    hass.config_entries.async_update_entry(entry, options={"monitoring_enabled": True})
+    hass.config_entries.async_update_entry(
+        entry, options={"monitoring_enabled": True, "export_all_updates": False}
+    )
     assert await hass.config_entries.async_setup(entry.entry_id)
     monitor = entry.runtime_data.monitoring
     await monitor.async_refresh()

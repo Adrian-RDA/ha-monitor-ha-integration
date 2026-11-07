@@ -48,7 +48,7 @@
     "step": {
       "init": {
         "title": "Monitoring und Übertragung",
-        "description": "Lokale Erfassung läuft unabhängig vom Server und überträgt neue Fundstellen nicht automatisch. Standardmäßig umfasst die Update-Übertragung Core/OS und die unten ausgewählten weiteren Quellen. So blockiert eine andere gefundene Quelle diese Liste nicht. Mit „Alle gefundenen Update-Quellen übertragen“ werden alle Quellen erfasst, auch bei ausgeschalteter lokaler Suche, und die gesamte Sammlung übertragen; eine unbekannte Quelle oder inkompatible Versionskennung macht dann laut aktuellem API-Vertrag die gesamte Update-Liste nicht verfügbar. Fehlende und nicht übertragene Updates werden unter Reparaturen und in der Diagnose kenntlich. Updates ohne Installationsfunktion werden ebenfalls erfasst. Monitoring-Übertragung ist zunächst aus. CPU/RAM beschreiben die sichtbare OS-Umgebung. Pausieren stoppt beide Uploads; lokale Erfassung läuft weiter. Änderungen laden die Integration neu und verwerfen Wiederholungspuffer.",
+        "description": "Monitoring Snapshot v2 überträgt standardmäßig alle gefundenen Update-Quellen, einschließlich versteckter Quellen und extern zu installierender Updates. Fehlerhafte Quellen führen zu einer Teil-Erfassung; bekannte Updates werden weiterhin übertragen. Originalversionen, Kategorien und freigegebene Quellen-/Gerätemetadaten sind enthalten. Explizit gespeicherte Quelleneinschränkungen bleiben erhalten. Für ausschließlich Core/OS und ausgewählte Quellen die Übertragung aller Quellen ausschalten. Monitoring-Uploads sind zunächst aus; lokale Erfassung läuft bei pausierten Uploads weiter. Protokoll 1 nur für ältere Empfänger wählen; seine strengeren Grenzen können die gesamte Update-Sammlung unverfügbar machen. Änderungen laden die Integration neu und verwerfen Wiederholungspuffer.",
         "data": {
           "enabled": "Übertragung aktivieren",
           "monitoring_enabled": "Monitoring-Snapshots übertragen",
@@ -56,7 +56,8 @@
           "system_updates": "Supervisor Core-/OS-Updates erfassen",
           "update_entities": "Zusätzliche Update-Quellen zur Übertragung",
           "discover_updates": "Alle Update-Quellen lokal erfassen",
-          "export_all_updates": "Alle gefundenen Update-Quellen übertragen"
+          "export_all_updates": "Alle gefundenen Update-Quellen übertragen",
+          "monitoring_schema_version": "Monitoring-Protokoll (2 empfohlen; 1 für ältere Empfänger)"
         }
       }
     }
@@ -120,11 +121,11 @@
     },
     "monitoring_blocked": {
       "title": "HA Monitor: Monitoring-Upload gestoppt",
-      "description": "Monitoring Snapshot v1 wurde abgelehnt: {reason}. Bei HTTP 404 fehlt der Monitoring-Empfänger, bei 409 wurde eine Snapshot-ID mit verändertem Inhalt verwendet. Kompatibilität, HTTPS und Uhrzeit prüfen und danach neu laden. Lokale Erfassung und Heartbeats laufen unabhängig weiter."
+      "description": "Monitoring-Snapshot-Upload fehlgeschlagen: {reason}. Bei payload_too_large überschreitet die Sammlung die Grenze des gewählten Protokolls; der letzte Serverstand bleibt erhalten. Exportumfang oder Metadatenmenge verringern und neu laden. HTTP 404 bedeutet, dass der Protokoll-Endpunkt fehlt; 409 bedeutet eine mit verändertem Inhalt wiederverwendete Snapshot-ID. Kompatibilität, HTTPS oder Uhr korrigieren und neu laden. Es gibt keinen automatischen Protokollwechsel. Lokale Erfassung und Heartbeats laufen unabhängig weiter."
     },
     "update_export_incomplete": {
       "title": "HA Monitor: Update-Übertragung ist eingeschränkt",
-      "description": "Der lokale Update-Bestand und die zur Übertragung gewählten Quellen unterscheiden sich, oder die gewählte Sammlung ist nicht vollständig übertragbar. Bekannte angebotene Updates außerhalb der Auswahl: {omitted}. Ursache: {reason}. Unter Einstellungen → Geräte & Dienste → HA Monitor → Konfigurieren weitere Update-Quellen ausdrücklich auswählen. Nicht verfügbare Quellen oder inkompatible Firmwarekennungen können die gesamte ausgewählte Liste sperren. „Alle gefundenen Update-Quellen übertragen“ schließt neue Fundstellen ein und unterliegt derselben Vollständigkeitsregel. Für Rohversionen und Teilbestände ist eine versionierte Erweiterung des Laravel-Vertrags nötig. Lokale Erfassung und Heartbeats laufen weiter."
+      "description": "Quellen sind durch die Exportauswahl ausgeschlossen oder konnten nicht vollständig erfasst werden. Bekannte angebotene Updates außerhalb der Auswahl: {omitted}. Grund: {reason}. Quellenauswahl und Verfügbarkeit unter Einstellungen → Geräte & Dienste → HA Monitor → Konfigurieren prüfen. Snapshot v2 überträgt bekannte Datensätze als Teil-Erfassung; die Update-Anzahl ist dann eine Untergrenze. Protokoll 1 kann bei Quellfehlern oder inkompatiblen Versionen die gesamte Update-Liste blockieren. Lokale Erfassung und Heartbeats laufen weiter."
     }
   },
   "selector": {
