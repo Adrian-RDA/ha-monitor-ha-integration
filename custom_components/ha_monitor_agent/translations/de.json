@@ -120,7 +120,7 @@
     },
     "monitoring_blocked": {
       "title": "HA Monitor: Monitoring-Upload gestoppt",
-      "description": "Monitoring-Snapshot-v2-Upload fehlgeschlagen: {reason}. Bei payload_too_large überschreitet die Sammlung 2 MiB; der letzte Serverstand bleibt erhalten. Exportumfang oder Metadatenmenge verringern und neu laden. HTTP 404 bedeutet, dass der v2-Endpunkt fehlt; 409 bedeutet eine mit verändertem Inhalt wiederverwendete Snapshot-ID. Kompatibilität, HTTPS oder Uhr korrigieren und neu laden. Lokale Erfassung und Heartbeats laufen unabhängig weiter."
+      "description": "Monitoring-Snapshot-v2-Upload fehlgeschlagen: {reason}. Bei payload_too_large überschreitet die Sammlung 2 MiB; der letzte Serverstand bleibt erhalten. Exportumfang oder Metadatenmenge verringern und neu laden. HTTP 404 bedeutet, dass der v2-Endpunkt fehlt; 409 bedeutet eine mit verändertem Inhalt wiederverwendete Snapshot-ID. Kompatibilität, HTTPS oder Uhr korrigieren und neu laden. Lokale Erfassung und Heartbeats laufen unabhängig weiter. Bei HTTP 422 nennt der Grund abgelehnte Schema-Feldpfade, sofern der Empfänger sie liefert. Auch die Diagnose zeigt diese Pfade, ohne Antworttexte oder Quellenwerte offenzulegen."
     },
     "update_export_incomplete": {
       "title": "HA Monitor: Update-Übertragung ist eingeschränkt",

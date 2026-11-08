@@ -1,6 +1,6 @@
 # Update-Erfassung und Monitoring Snapshot v2
 
-Stand: Integration **0.3.1**, Laravel-Vertrag aus [PROTOCOL.md](PROTOCOL.md), Abschnitt Monitoring Snapshot v2. Der v2-Empfänger ist bereits implementiert; diese Integration liefert jetzt den Sender. Pairing und Heartbeats bleiben v1. Der autoritative Protokolltext wurde für diese Implementierung nicht verändert.
+Stand: Integration **0.3.2**, Laravel-Vertrag aus [PROTOCOL.md](PROTOCOL.md), Abschnitt Monitoring Snapshot v2. Der v2-Empfänger ist bereits implementiert; diese Integration liefert jetzt den Sender. Pairing und Heartbeats bleiben v1. Der autoritative Protokolltext wurde für diese Implementierung nicht verändert.
 
 ## Vier gemeldete verfügbare Updates
 
@@ -46,3 +46,11 @@ Automatisierte Tests ersetzen keinen Hardware-/Live-Laravel-Abnahmetest. Es wurd
 - [Immich ohne Installationsfunktion](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/immich/update.py)
 - [Proxmox-Update-Entität](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/proxmoxve/update.py)
 - [Shelly-Firmwarekennungen](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/shelly/update.py)
+
+## HTTP-422-Abgleich mit Laravel (0.3.2)
+
+Die Live-Diagnose zeigte bei Agent 0.3.1 laufende CPU/RAM/Disk-Erfassung und aktivierten Export, aber einen mit HTTP 422 blockierten v2-Uploader. Die gemeldete Sammlung umfasste 161 Quellen, davon 20 deaktivierte und zehn nicht verfügbare Quellen. Die v1-Beschriftung der alten Reparaturmeldung ist kein Nachweis für einen v1-Request; die Diagnose bestätigt Schemaversion 2.
+
+Beim Abgleich mit `/home/adrian/ha-monitor/app/Http/Requests/Api/MonitoringSnapshotV2Request.php` wurde ein tatsächlicher Vertragsbruch reproduziert: HA liefert weitere native Deaktivierungsgründe. Ein `hass`-Datensatz führte im echten Validator zu `snapshots.0.updates.items.0.disabled_by`. Der Sender bildet `hass`, `device` und `config_entry` jetzt auf den dokumentierten unbekannten Grund null ab, ohne die deaktivierte Quelle als aktiv zu behandeln oder alte Versionswerte wiederzuverwenden. Erforderliche deaktivierte Quellen bleiben teilweise; automatisch entdeckte ausgeschlossene Quellen verhindern Vollständigkeit nicht.
+
+Der optionale Gegencheck in `tests/test_laravel_contract.py` läuft per Sail gegen die unveränderten Laravel-Validatoren. Er testet alle fünf nativen Gründe sowie Startup und eine teilweise 161-Quellen-Sammlung. Der normale HTTPS-Regressionstest prüft zusätzlich erforderliche/nicht erforderliche Quellen und die sichere Diagnose: höchstens acht bekannte Feldpfade aus begrenzten 422-Antworten, keine Antworttexte oder abgelehnten Werte. Ein permanenter Fehler bleibt gestoppt; es gibt keine unveränderten Wiederholungen oder v1-Ausweichübertragung. Der Laravel-Checkout wird nicht verändert.

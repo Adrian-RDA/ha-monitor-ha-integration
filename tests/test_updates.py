@@ -5,10 +5,12 @@ import json
 from unittest.mock import patch
 
 from homeassistant.components.update import UpdateEntity, UpdateEntityFeature
+from homeassistant.config_entries import ConfigEntryDisabler
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 import pytest
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.ha_monitor_agent.diagnostics import (
     async_get_config_entry_diagnostics,
@@ -37,6 +39,43 @@ def source(hass, entity_id, platform="shelly", state="on", **attributes):
         },
     )
     return entry
+
+
+def disabled_source(hass, reason):
+    """Use real parent/device disablers, including derived reasons on newer HA."""
+    parent = MockConfigEntry(
+        domain="shelly",
+        disabled_by=ConfigEntryDisabler.USER
+        if reason == er.RegistryEntryDisabler.CONFIG_ENTRY
+        else None,
+    )
+    parent.add_to_hass(hass)
+    device_id = None
+    if reason == er.RegistryEntryDisabler.DEVICE:
+        device_id = (
+            dr.async_get(hass)
+            .async_get_or_create(
+                config_entry_id=parent.entry_id,
+                identifiers={("shelly", "disabled-fixture")},
+                disabled_by=dr.DeviceEntryDisabler.USER,
+            )
+            .id
+        )
+    entity = er.async_get(hass).async_get_or_create(
+        "update",
+        "shelly",
+        f"disabled_{reason}",
+        config_entry=parent,
+        device_id=device_id,
+        disabled_by=reason,
+        suggested_object_id=f"disabled_{reason}",
+    )
+    assert entity.disabled_by == reason
+    # Stale values must be discarded for every native reason, not just user.
+    hass.states.async_set(
+        entity.entity_id, "on", {"installed_version": "1", "latest_version": "2"}
+    )
+    return entity
 
 
 async def test_discovery_all_products_and_read_only_updates_reach_tls_backend(

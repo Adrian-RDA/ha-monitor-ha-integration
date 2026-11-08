@@ -130,6 +130,44 @@ async def test_invalid_ack_never_discards_snapshot(hass, backend, entry):
     assert monitor.uploader.pending_snapshots == 1
 
 
+async def test_rejected_snapshot_discloses_field_paths_without_response_values(
+    hass, backend, entry, caplog
+):
+    from custom_components.ha_monitor_agent.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    field = "snapshots.0.updates.items.14.disabled_by"
+    backend.monitoring_responses.append(
+        web.json_response(
+            {
+                "message": backend.token,
+                "errors": {field: [backend.code], backend.token: [backend.code]},
+            },
+            status=422,
+        )
+    )
+    monitor = await make_monitor(hass, backend, entry)
+    await monitor.uploader.async_send_once()
+    uploader = monitor.uploader
+    assert uploader.status == "blocked" and uploader.last_error == "http_422"
+    assert uploader.validation_fields == (field,)
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, uploader.issue_id)
+    assert issue.translation_placeholders["reason"] == f"http_422; {field}"
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    assert diagnostics["monitoring"]["validation_fields"] == [field]
+    public = (
+        json.dumps(diagnostics, default=str)
+        + caplog.text
+        + str(issue.translation_placeholders)
+    )
+    assert backend.token not in public and backend.code not in public
+    await uploader.async_send_once()
+    assert len(backend.monitoring_requests) == 1
+    await uploader.heartbeat.async_send_once()
+    assert uploader.heartbeat.status == "online"
+
+
 async def test_retry_after_minimum_and_backoff_cap(hass, backend, entry, freezer):
     backend.monitoring_responses.append(
         web.Response(status=429, headers={"Retry-After": "120"})

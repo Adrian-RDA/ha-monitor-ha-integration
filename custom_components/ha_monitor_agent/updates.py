@@ -229,7 +229,11 @@ class UpdateInventory:
                     "available_version": record.latest_version,
                     "skipped_version": record.skipped_version,
                     "in_progress": record.in_progress,
-                    "disabled_by": record.disabled_by,
+                    # HA also uses hass/device/config_entry. V2 only defines
+                    # user/integration; null explicitly means an unknown reason.
+                    "disabled_by": record.disabled_by
+                    if record.disabled_by in {"user", "integration"}
+                    else None,
                     "required": scope == "selected"
                     or record.availability != "disabled"
                     or record.explicitly_selected,

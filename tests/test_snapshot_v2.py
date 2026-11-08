@@ -24,7 +24,7 @@ from .conftest import validate_updates_v2
 from .test_monitoring import make_monitor
 from .test_reported_updates import IMMICH, PROXMOX, REPORTED, SHELLY
 from .test_reported_updates import reported_updates as reported_updates
-from .test_updates import source
+from .test_updates import disabled_source, source
 from .test_updates import supervisor_updates as supervisor_updates
 
 
@@ -40,6 +40,40 @@ async def make_v2(hass, backend, entry, **options):
 
 def sent_updates(backend):
     return backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]
+
+
+@pytest.mark.parametrize("reason", list(er.RegistryEntryDisabler))
+@pytest.mark.parametrize("selected", [False, True])
+async def test_all_native_disabled_reasons_are_safe_without_hiding_healthy_sources(
+    hass, backend, entry, reason, selected
+):
+    disabled = disabled_source(hass, reason)
+    good = source(hass, "update.healthy", latest_version="release/2026:11")
+    monitor = await make_v2(
+        hass,
+        backend,
+        entry,
+        update_entities=[disabled.entity_id] if selected else [],
+    )
+    await monitor.uploader.async_send_once()
+    sent = sent_updates(backend)
+    assert sent["coverage"] == ("partial" if selected else "complete")
+    assert sent["counts"]["disabled"] == 1 and sent["counts"]["available"] == 1
+    records = {item["key"]: item for item in sent["items"]}
+    assert records[good.entity_id]["available_version"] == "release/2026:11"
+    assert records[disabled.entity_id]["availability"] == "disabled"
+    assert records[disabled.entity_id]["disabled_by"] == (
+        str(reason)
+        if reason
+        in {er.RegistryEntryDisabler.USER, er.RegistryEntryDisabler.INTEGRATION}
+        else None
+    )
+    assert (
+        records[disabled.entity_id]["installed_version"]
+        is records[disabled.entity_id]["available_version"]
+        is None
+    )
+    assert records[disabled.entity_id]["required"] is selected
 
 
 async def test_default_upgrade_sends_all_four_raw_versions_and_metadata(

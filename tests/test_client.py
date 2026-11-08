@@ -186,6 +186,56 @@ async def test_redirect_does_not_redeem_code_or_leak_token(backend):
     assert len(backend.requests) == 1
 
 
+async def test_monitoring_validation_errors_only_retain_allowlisted_schema_paths(
+    backend,
+):
+    fields = {
+        "schema_version": [backend.token],
+        "snapshots.0.updates.items.14.disabled_by": [backend.code],
+        "snapshots.0.metrics.cpu_percent.value": ["private measurement"],
+        "snapshots.0.inventory.entities.value": ["private inventory"],
+        "snapshots.0.updates.items.1.device.id": ["private device"],
+        "snapshots.0.updates.counts.active": ["private counts"],
+        "snapshots.0.updates": ["private update"],
+        "payload": ["private payload"],
+        "sent_at": ["beyond field limit"],
+        backend.token: ["credential in untrusted key"],
+        f"snapshots.0.updates.items.{backend.code}.name": ["untrusted index"],
+        "snapshots.0.updates.items.0.release_url": ["not in schema"],
+    }
+    backend.monitoring_responses.append(
+        web.json_response({"message": backend.token, "errors": fields}, status=422)
+    )
+    with pytest.raises(ProtocolError, match="http_422") as result:
+        await AgentClient(backend.session, backend.url).async_monitoring(
+            b"{}", backend.token, 1
+        )
+    assert result.value.validation_fields == tuple(fields)[:8]
+    assert backend.token not in repr(result.value) + str(result.value.validation_fields)
+    assert backend.code not in repr(result.value) + str(result.value.validation_fields)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"invalid JSON",
+        b"[]",
+        b'{"errors":[]}',
+        b'{"errors":{"private_field":["private message"]}}',
+        b"x" * 65_537,
+    ],
+)
+async def test_unusable_or_excessive_validation_response_keeps_safe_http_error(
+    backend, body
+):
+    backend.monitoring_responses.append(web.Response(body=body, status=422))
+    with pytest.raises(ProtocolError, match="http_422") as result:
+        await AgentClient(backend.session, backend.url).async_monitoring(
+            b"{}", backend.token, 1
+        )
+    assert result.value.validation_fields == ()
+
+
 @pytest.mark.parametrize(
     "timestamp",
     [

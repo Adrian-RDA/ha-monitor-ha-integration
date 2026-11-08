@@ -120,7 +120,7 @@
     },
     "monitoring_blocked": {
       "title": "HA Monitor monitoring uploads stopped",
-      "description": "Monitoring Snapshot v2 upload failed: {reason}. A payload_too_large collection exceeds 2 MiB; the previous server projection is retained. Reduce the export scope or metadata size and reload. HTTP 404 means the v2 endpoint is absent; 409 means a snapshot ID was reused with changed content. Correct compatibility, HTTPS or clock settings, then reload. Local collection and heartbeats continue independently."
+      "description": "Monitoring Snapshot v2 upload failed: {reason}. A payload_too_large collection exceeds 2 MiB; the previous server projection is retained. Reduce the export scope or metadata size and reload. HTTP 404 means the v2 endpoint is absent; 409 means a snapshot ID was reused with changed content. Correct compatibility, HTTPS or clock settings, then reload. Local collection and heartbeats continue independently. For HTTP 422, the reason includes rejected schema field paths when supplied by the receiver. Diagnostics also show these paths without response messages or source values."
     },
     "update_export_incomplete": {
       "title": "HA Monitor update transmission is limited",

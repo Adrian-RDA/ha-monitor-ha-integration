@@ -52,6 +52,7 @@ async def async_get_config_entry_diagnostics(
             },
             "status": uploader.status,
             "last_error": uploader.last_error,
+            "validation_fields": list(uploader.validation_fields),
             "pending_snapshots": uploader.pending_snapshots,
             "dropped_snapshots": uploader.dropped_snapshots,
             "last_upload": uploader.last_upload,

@@ -10,15 +10,17 @@ import re
 from typing import Any
 from uuid import UUID
 
-from aiohttp import ClientError, ClientSession, ClientTimeout
+from aiohttp import ClientError, ClientResponse, ClientSession, ClientTimeout
 from aiohttp.client_exceptions import ClientSSLError
 from yarl import URL
 
 from .const import (
+    INVENTORY_KEYS,
     MAX_BODY_BYTES,
     MAX_BUFFER_EVENTS,
     MAX_RESPONSE_BYTES,
     MAX_RETRY_AFTER,
+    METRIC_KEYS,
     REQUEST_TIMEOUT,
     SCHEMA_VERSION,
 )
@@ -42,6 +44,51 @@ class TransportError(AgentError):
 
 class ProtocolError(AgentError):
     """A permanent failure requiring correction, without unchanged retries."""
+
+    def __init__(self, code: str, *, validation_fields: tuple[str, ...] = ()) -> None:
+        super().__init__(code)
+        self.validation_fields = validation_fields
+
+
+def _validation_fields(data: dict[str, Any]) -> tuple[str, ...]:
+    """Retain bounded schema paths only; never messages or arbitrary error keys."""
+    errors = data.get("errors")
+    if not isinstance(errors, dict):
+        return ()
+    paths = {"payload", "schema_version", "instance_id", "sent_at", "snapshots"}
+    snapshot = r"snapshots\.[0-9]{1,4}"
+    metric = "|".join(METRIC_KEYS)
+    inventory = "|".join(INVENTORY_KEYS)
+    item = r"key|name|category|availability|source|supports_install|installed_version|available_version|skipped_version|in_progress|disabled_by|required|device(?:\.(?:id|name|manufacturer|model))?"
+    patterns = (
+        rf"{snapshot}(?:\.(?:snapshot_id|observed_at|metrics|inventory|updates))?",
+        rf"{snapshot}\.metrics\.(?:{metric})(?:\.(?:status|value|scope))?",
+        rf"{snapshot}\.inventory\.(?:{inventory})(?:\.(?:status|value))?",
+        rf"{snapshot}\.updates\.(?:coverage|scope|counts(?:\.(?:total|active|disabled|unknown|unavailable|available|skipped))?|items(?:\.[0-9]{{1,4}}(?:\.(?:{item}))?)?)",
+    )
+    return tuple(
+        key
+        for key in errors
+        if isinstance(key, str)
+        and len(key) <= 128
+        and (key in paths or any(re.fullmatch(pattern, key) for pattern in patterns))
+    )[:8]
+
+
+async def _read_json_response(response: ClientResponse) -> dict[str, Any]:
+    """Bound successful responses and validation errors equally."""
+    raw = bytearray()
+    async for chunk in response.content.iter_chunked(4096):
+        raw.extend(chunk)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise ProtocolError("invalid_response")
+    try:
+        data = json.loads(raw)
+    except (ValueError, UnicodeError, RecursionError) as err:
+        raise ProtocolError("invalid_response") from err
+    if not isinstance(data, dict):
+        raise ProtocolError("invalid_response")
+    return data
 
 
 def normalize_server_url(value: str) -> str:
@@ -223,20 +270,17 @@ class AgentClient:
                         "rate_limited" if response.status == 429 else "server_error",
                         _retry_after(response.headers.get("Retry-After")),
                     )
+                if response.status == 422 and endpoint == "monitoring":
+                    try:
+                        data = await _read_json_response(response)
+                    except ProtocolError, ClientError, TimeoutError:
+                        fields = ()
+                    else:
+                        fields = _validation_fields(data)
+                    raise ProtocolError("http_422", validation_fields=fields)
                 if response.status != 200:
                     raise ProtocolError(f"http_{response.status}")
-                raw = bytearray()
-                async for chunk in response.content.iter_chunked(4096):
-                    raw.extend(chunk)
-                    if len(raw) > MAX_RESPONSE_BYTES:
-                        raise ProtocolError("invalid_response")
-                try:
-                    data = json.loads(raw)
-                except (ValueError, UnicodeError, RecursionError) as err:
-                    raise ProtocolError("invalid_response") from err
-                if not isinstance(data, dict):
-                    raise ProtocolError("invalid_response")
-                return data
+                return await _read_json_response(response)
         except ClientSSLError:
             raise ProtocolError("tls_error") from None
         except ClientError, TimeoutError:

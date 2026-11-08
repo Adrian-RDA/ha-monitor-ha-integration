@@ -248,6 +248,7 @@ class MonitoringUploader:
         self.hass, self.entry, self.heartbeat = hass, entry, heartbeat
         self.status = "paused"
         self.last_error: str | None = None
+        self.validation_fields: tuple[str, ...] = ()
         self.last_upload: datetime | None = None
         self.failures = 0
         self.dropped_snapshots = 0
@@ -364,8 +365,9 @@ class MonitoringUploader:
             self.status, self.last_error = "reauth_required", "invalid_auth"
 
     @callback
-    def _block(self, reason: str) -> None:
+    def _block(self, reason: str, *, validation_fields: tuple[str, ...] = ()) -> None:
         self.status, self.last_error = "blocked", reason
+        self.validation_fields = validation_fields
         ir.async_create_issue(
             self.hass,
             DOMAIN,
@@ -373,7 +375,10 @@ class MonitoringUploader:
             is_fixable=False,
             severity=ir.IssueSeverity.ERROR,
             translation_key="monitoring_blocked",
-            translation_placeholders={"reason": reason},
+            translation_placeholders={
+                "reason": reason
+                + ("; " + ", ".join(validation_fields) if validation_fields else "")
+            },
         )
 
     async def _async_send_once(self) -> None:
@@ -410,7 +415,7 @@ class MonitoringUploader:
             return
         except ProtocolError as err:
             if self.status != "blocked":
-                self._block(str(err))
+                self._block(str(err), validation_fields=err.validation_fields)
             return
         except TransportError as err:
             if self._stopped or self.status == "blocked":
@@ -431,6 +436,7 @@ class MonitoringUploader:
             self.last_upload = received_at
             self._pending = None
             self.status, self.last_error = "online", None
+            self.validation_fields = ()
             self.failures = 0
             self._delay = 15
             ir.async_delete_issue(self.hass, DOMAIN, self.issue_id)

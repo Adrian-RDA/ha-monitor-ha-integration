@@ -2,7 +2,7 @@
 
 ![HA Monitor](custom_components/ha_monitor_agent/brand/icon.png)
 
-Asynchroner, ausgehender Monitoring-Agent für den Laravel-Empfänger von HA Monitor. Domain: `ha_monitor_agent`, Version: `0.3.1` (Monitoring Snapshot v2). Unterstützt Home Assistant **ab 2026.10.4**, Python **3.14.2+**. Nutzt `psutil>=7.2.2`; System Monitor und andere zusätzliche Integrationen werden nicht benötigt.
+Asynchroner, ausgehender Monitoring-Agent für den Laravel-Empfänger von HA Monitor. Domain: `ha_monitor_agent`, Version: `0.3.2` (Monitoring Snapshot v2). Unterstützt Home Assistant **ab 2026.10.4**, Python **3.14.2+**. Nutzt `psutil>=7.2.2`; System Monitor und andere zusätzliche Integrationen werden nicht benötigt.
 
 ## Installation
 
@@ -79,6 +79,8 @@ Es gibt höchstens einen Monitoring-Request gleichzeitig und maximal vier Versuc
 
 HTTP 404 am Monitoring-Endpunkt stoppt nur diesen Uploader bis zum Neuladen nach einem kompatiblen Backend-Update. HTTP 409 stoppt ihn wegen widersprüchlicher Wiederverwendung einer Snapshot-ID. Ein Monitoring-Fehler pausiert weder Heartbeats noch lokale Messungen. HTTP 401 auf einem der Endpunkte sperrt beide Uploadpfade und startet Reauthentifizierung; der lokale Datenstand wird weiterhin aktualisiert. Die bereinigte Integrationsdiagnose zeigt Uploadstatus, letzten Erfassungszeitpunkt sowie Erfassungsstatus und Exportauswahl für CPU/RAM/Disk. Damit lassen sich fehlende Erfassungen von blockierten Uploads unterscheiden. Monitoring beeinflusst keine Heartbeat-Zeitpunkte und keine Liveness-Aussage.
 
+Bei HTTP 422 werden höchstens acht bekannte Schema-Feldpfade aus der begrenzten Fehlerantwort in Reparaturen und `monitoring.validation_fields` übernommen, etwa `snapshots.0.updates.items.14.disabled_by`. Antworttexte, abgelehnte Werte und beliebige Fehlerschlüssel bleiben ausgeschlossen. Native HA-Deaktivierungsgründe `hass`, `device` und `config_entry` werden gemäß v2 als `disabled` mit unbekanntem Grund (`disabled_by: null`) übertragen; `user` und `integration` bleiben erhalten. Eine solche Quelle verwirft keine gültigen Messwerte oder Angebote. Wenn die Oberfläche nach einem Update noch „Snapshot v1“ anzeigt, Browseransicht vollständig neu laden; die tatsächliche Schemaversion steht in der Diagnose.
+
 ## Entwicklung und Tests
 
 ```bash
@@ -92,6 +94,14 @@ python3.14 -m venv .venv
 ```
 
 Die Tests verwenden echte Home-Assistant-Config-Entries, Flows und Sensorplattformen sowie einen simulierten Laravel-Empfänger über HTTPS mit eigener, ausschließlich in Tests vertrauter CA. OS-Aufrufe und Supervisor-Antworten werden simuliert; getestet werden auch Scope/Nenner, Startup, fehlende Berechtigungen, Registry-Zählregeln, alle vier gemeldeten Updates, sieben Kategorien, vollständige/teilweise Erfassung, 4.096 Quellen, Requests über 64 KiB und das 2-MiB-Limit, feste Retry-Inhalte, 404/409, Coalescing, Uhrkorrektur und parallele Heartbeats bei wartender Erfassung bzw. wartendem Monitoring-HTTP. Sie benötigen keinen echten Laravel-Server. Die offizielle Testbibliothek `pytest-homeassistant` ist auf HA 2026.11.0 festgelegt. CI führt Tests, Ruff, Paketprüfungen sowie die offiziellen hassfest- und HACS-Actions aus.
+
+Optionaler Gegencheck gegen den **echten Laravel-Validator** des benachbarten Checkouts (Sail muss bereits laufen):
+
+```bash
+HA_MONITOR_LARAVEL_PATH=/home/adrian/ha-monitor .venv/bin/pytest tests/test_laravel_contract.py
+```
+
+Dieser Test bootet Laravel über Sail und validiert nur die erzeugten Payloads mit `MonitoringSnapshotV2Request`; er ruft keinen Controller auf, verwendet keine echten Zugangsdaten und schreibt keine Monitoringdaten. Geprüft werden alle nativen Deaktivierungsgründe, der Startup-Snapshot und eine teilweise Sammlung mit 161 Quellen. Ohne die Umgebungsvariable werden diese optionalen Tests übersprungen.
 
 Offizielles hassfest lokal mit Docker:
 

@@ -1,7 +1,7 @@
 """Constants for HA Monitor's outbound agent."""
 
 DOMAIN = "ha_monitor_agent"
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 CONF_SERVER_URL = "server_url"
 CONF_PAIRING_CODE = "pairing_code"
 CONF_AGENT_TOKEN = "agent_token"
