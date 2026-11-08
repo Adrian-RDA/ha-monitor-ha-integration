@@ -75,14 +75,29 @@ async def test_discovery_all_products_and_read_only_updates_reach_tls_backend(
     assert monitor.update_inventory.summary()["not_installable"] == 2
     await monitor.uploader.async_send_once()
     sent = backend.monitoring_requests[0][0]["snapshots"][0]["updates"]
-    assert sent["status"] == "ok" and len(sent["items"]) == 9
-    assert [item["kind"] for item in sent["items"][:2]] == ["core", "os"]
+    assert sent["coverage"] == "complete" and len(sent["items"]) == 9
+    assert [item["category"] for item in sent["items"][:2]] == ["core", "os"]
     assert len(backend.monitoring_stored) == 1
     assert {item["key"] for item in sent["items"]} == {
         record.entity_id for record in monitor.update_inventory.records
     }
     assert all(
-        set(item) == {"key", "kind", "name", "installed_version", "available_version"}
+        set(item)
+        == {
+            "key",
+            "category",
+            "name",
+            "installed_version",
+            "available_version",
+            "availability",
+            "source",
+            "device",
+            "supports_install",
+            "skipped_version",
+            "in_progress",
+            "disabled_by",
+            "required",
+        }
         for item in sent["items"]
     )
 
@@ -122,7 +137,7 @@ async def test_native_ha_state_on_and_skip_are_independent_of_install_feature(ha
     )
 
 
-async def test_raw_shelly_firmware_blocks_only_wire_projection_preserving_metadata(
+async def test_raw_shelly_firmware_reaches_receiver_preserving_metadata(
     hass, backend, entry
 ):
     registry = er.async_get(hass)
@@ -174,14 +189,13 @@ async def test_raw_shelly_firmware_blocks_only_wire_projection_preserving_metada
     with pytest.raises(FrozenInstanceError):
         record.latest_version = "fake"
     await monitor.uploader.async_send_once()
-    assert (
-        backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]
-        == inventory.as_protocol()
-    )
+    assert backend.monitoring_requests[-1][0]["snapshots"][0][
+        "updates"
+    ] == inventory.as_protocol_v2("all")
     diagnostic = await async_get_config_entry_diagnostics(hass, entry)
     serialized = json.dumps(diagnostic, default=str)
     assert diagnostic["monitoring"]["updates"]["known_available"] == 1
-    assert diagnostic["monitoring"]["updates"]["protocol_status"] == "unavailable"
+    assert diagnostic["monitoring"]["updates"]["protocol_status"] == "complete"
     assert all(
         secret not in serialized
         for secret in (
@@ -325,7 +339,7 @@ async def test_discovery_option_retains_explicit_selection_and_core_os_exclusion
     assert core.entity_id in {record.entity_id for record in selected.records}
 
 
-async def test_local_count_and_coverage_remain_visible_when_v1_cannot_send_versions(
+async def test_local_count_and_coverage_remain_visible_with_raw_versions(
     hass, backend, entry
 ):
     from custom_components.ha_monitor_agent.const import DOMAIN
@@ -350,7 +364,6 @@ async def test_local_count_and_coverage_remain_visible_when_v1_cannot_send_versi
         options={
             "enabled": False,
             "export_all_updates": True,
-            "monitoring_schema_version": 1,
         },
     )
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -359,7 +372,7 @@ async def test_local_count_and_coverage_remain_visible_when_v1_cannot_send_versi
     await hass.async_block_till_done()
     state = hass.states.get(sensor.entity_id)
     assert state.state == "1" and state.attributes["collection_status"] == "ok"
-    assert state.attributes["protocol_status"] == "unavailable"
+    assert state.attributes["protocol_status"] == "complete"
     assert state.attributes["known_available"] == 1
     assert backend.token not in str(state.attributes)
     source(hass, "update.offline", state="unavailable")
@@ -479,15 +492,19 @@ async def test_unselected_bad_source_cannot_erase_core_os_and_selected_updates(
     )
     await monitor.uploader.async_send_once()
     sent = backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]
-    assert sent["status"] == "ok"
+    assert sent["coverage"] == "complete"
     assert {item["key"] for item in sent["items"]} == set(supervisor_updates + selected)
-    assert [item["kind"] for item in sent["items"][:2]] == ["core", "os"]
+    assert [item["category"] for item in sent["items"][:2]] == ["core", "os"]
     assert bad.entity_id in {
         record.entity_id for record in monitor.update_inventory.records
     }
     summary = monitor.update_summary()
-    assert summary["export_scope"] == "selected" and summary["protocol_status"] == "ok"
-    assert summary["protocol_issues"] == {} and summary["local_protocol_issues"]
+    assert (
+        summary["export_scope"] == "selected"
+        and summary["protocol_status"] == "complete"
+    )
+    assert summary["protocol_issues"] == {}
+    assert bool(summary["local_protocol_issues"]) == (bad_source != "raw_version")
     if bad_source == "raw_version":
         assert summary["not_exported"] == 1
         assert ir.async_get(hass).async_get_issue(
@@ -496,7 +513,7 @@ async def test_unselected_bad_source_cannot_erase_core_os_and_selected_updates(
     assert monitor.uploader.status == "online"
 
 
-async def test_strict_all_export_requires_new_explicit_option(
+async def test_all_export_transmits_partial_records_then_recovers(
     hass, backend, entry, supervisor_updates
 ):
     from homeassistant.helpers import issue_registry as ir
@@ -508,29 +525,29 @@ async def test_strict_all_export_requires_new_explicit_option(
         hass, backend, entry, discover_updates=True, export_all_updates=True
     )
     await monitor.uploader.async_send_once()
-    assert backend.monitoring_requests[-1][0]["snapshots"][0]["updates"] == {
-        "status": "unavailable",
-        "items": [],
-    }
+    sent = backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]
+    assert sent["coverage"] == "partial" and sent["counts"]["available"] == 2
+    assert sent["counts"]["unavailable"] == 1
     assert monitor.update_summary()["protocol_issues"] == {"source_unavailable": 1}
     assert ir.async_get(hass).async_get_issue(DOMAIN, monitor.update_export_issue_id)
     hass.states.async_set(
         bad.entity_id, "off", {"installed_version": "1", "latest_version": "1"}
     )
     await monitor.async_refresh()
-    assert monitor.data["updates"]["status"] == "ok"
+    assert monitor.data["updates"]["coverage"] == "complete"
     assert (
         ir.async_get(hass).async_get_issue(DOMAIN, monitor.update_export_issue_id)
         is None
     )
 
 
-async def test_explicit_source_failure_still_invalidates_complete_selected_scope(
+async def test_explicit_source_failure_marks_selected_scope_partial(
     hass, backend, entry, supervisor_updates
 ):
     bad = source(hass, "update.required", state="unavailable")
     monitor = await make_monitor(hass, backend, entry, update_entities=[bad.entity_id])
-    assert monitor.data["updates"] == {"status": "unavailable", "items": []}
+    assert monitor.data["updates"]["coverage"] == "partial"
+    assert monitor.data["updates"]["counts"]["available"] == 2
     assert monitor.update_summary()["protocol_issues"] == {"source_unavailable": 1}
 
 
@@ -552,9 +569,9 @@ async def test_discovery_exception_is_isolated_from_explicit_export(
     assert monitor.update_inventory.status == "unavailable"
     await monitor.uploader.async_send_once()
     sent = backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]
-    assert sent["status"] == "ok" and {item["key"] for item in sent["items"]} == set(
-        supervisor_updates
-    )
+    assert sent["coverage"] == "complete" and {
+        item["key"] for item in sent["items"]
+    } == set(supervisor_updates)
     assert backend.token not in json.dumps(monitor.update_summary())
 
 

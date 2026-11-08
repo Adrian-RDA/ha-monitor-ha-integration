@@ -95,12 +95,14 @@ async def test_reported_running_options_discover_four_but_export_only_core(
     assert {record.entity_id for record in monitor.update_inventory.offered} == REPORTED
     await monitor.uploader.async_send_once()
     sent = backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]
-    assert sent["status"] == "ok" and {item["key"] for item in sent["items"]} == {CORE}
+    assert sent["coverage"] == "complete" and {
+        item["key"] for item in sent["items"] if item["availability"] == "available"
+    } == {CORE}
     summary = monitor.update_summary()
     assert summary["known_available"] == 4
     assert summary["not_installable"] == 2
     assert summary["not_exported"] == 3
-    assert summary["export_item_count"] == 1
+    assert summary["export_item_count"] == 2
     assert summary["blocked_known_available"] == 0
     assert ir.async_get(hass).async_get_issue(DOMAIN, monitor.update_export_issue_id)
 
@@ -119,9 +121,11 @@ async def test_export_all_exports_reported_four_independently_of_local_discovery
     )
     await monitor.uploader.async_send_once()
     sent = backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]
-    assert sent["status"] == "ok" and len(sent["items"]) == 4
-    assert {item["key"] for item in sent["items"]} == REPORTED
-    assert sent["items"][0]["kind"] == "core"
+    assert sent["coverage"] == "complete" and len(sent["items"]) == 5
+    assert {
+        item["key"] for item in sent["items"] if item["availability"] == "available"
+    } == REPORTED
+    assert sent["items"][0]["category"] == "core"
     records = {record.entity_id: record for record in monitor.update_inventory.offered}
     assert records[CORE].supports_install is records[SHELLY].supports_install is True
     assert (
@@ -135,13 +139,21 @@ async def test_export_all_exports_reported_four_independently_of_local_discovery
         assert item["name"]
         assert set(item) == {
             "key",
-            "kind",
+            "category",
+            "availability",
+            "source",
+            "device",
+            "supports_install",
+            "skipped_version",
+            "in_progress",
+            "disabled_by",
+            "required",
             "name",
             "installed_version",
             "available_version",
         }
     summary = monitor.update_summary()
-    assert summary["export_item_count"] == 4 and summary["not_exported"] == 0
+    assert summary["export_item_count"] == 5 and summary["not_exported"] == 0
     assert (
         ir.async_get(hass).async_get_issue(DOMAIN, monitor.update_export_issue_id)
         is None
@@ -164,6 +176,7 @@ async def test_explicitly_selecting_reported_sources_exports_without_export_all(
         for item in backend.monitoring_requests[-1][0]["snapshots"][0]["updates"][
             "items"
         ]
+        if item["availability"] == "available"
     } == REPORTED
 
 
@@ -252,14 +265,12 @@ async def test_single_entity_exception_keeps_all_reported_observations_and_heart
         "source_collection_failed": 1,
     }
     await monitor.uploader.async_send_once()
-    # v1 does not allow falsely labelling these four as a complete inventory.
-    assert backend.monitoring_requests[-1][0]["snapshots"][0]["updates"] == {
-        "status": "unavailable",
-        "items": [],
-    }
+    sent = backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]
+    assert sent["coverage"] == "partial" and sent["counts"]["available"] == 4
+    assert sent["counts"]["unavailable"] == 1
     summary = monitor.update_summary()
-    assert summary["known_available"] == summary["blocked_known_available"] == 4
-    assert summary["export_item_count"] == 0
+    assert summary["known_available"] == 4 and summary["blocked_known_available"] == 0
+    assert summary["export_item_count"] == 6
     await monitor.uploader.heartbeat.async_send_once()
     assert monitor.uploader.heartbeat.status == "online"
     diagnostic = await async_get_config_entry_diagnostics(hass, entry)
@@ -305,11 +316,9 @@ async def test_unusual_unsupported_versions_are_retained_without_hiding_peers_lo
     assert record.latest_version == raw_version
     assert {record.entity_id for record in monitor.update_inventory.offered} >= REPORTED
     await monitor.uploader.async_send_once()
-    assert monitor.update_summary()["protocol_issues"] == {
-        "latest_version_not_representable": 1
-    }
-    assert monitor.update_summary()["blocked_known_available"] == 5
+    assert monitor.update_summary()["protocol_issues"] == {}
+    assert monitor.update_summary()["blocked_known_available"] == 0
     assert (
-        backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]["status"]
-        == "unavailable"
+        backend.monitoring_requests[-1][0]["snapshots"][0]["updates"]["coverage"]
+        == "complete"
     )

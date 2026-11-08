@@ -14,7 +14,6 @@ from homeassistant.helpers import issue_registry as ir
 import pytest
 
 from custom_components.ha_monitor_agent import updates
-from custom_components.ha_monitor_agent.client import AgentClient, ProtocolError
 from custom_components.ha_monitor_agent.const import DOMAIN
 from custom_components.ha_monitor_agent.diagnostics import (
     async_get_config_entry_diagnostics,
@@ -34,7 +33,6 @@ async def make_v2(hass, backend, entry, **options):
         hass,
         backend,
         entry,
-        monitoring_schema_version=2,
         export_all_updates=options.pop("export_all_updates", True),
         **options,
     )
@@ -548,10 +546,3 @@ async def test_heartbeat_revocation_wins_over_inflight_v2_response(
     await monitor.async_refresh()
     await monitor.uploader.async_send_once()
     assert len(backend.monitoring_requests) == 1
-
-
-async def test_invalid_snapshot_version_rejected_without_network(backend):
-    client = AgentClient(backend.session, backend.url)
-    with pytest.raises(ProtocolError, match="unsupported_schema"):
-        await client.async_monitoring(b"{}", backend.token, 1, schema_version=True)
-    assert not backend.monitoring_requests

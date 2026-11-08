@@ -168,14 +168,10 @@ class AgentClient:
         """Only acknowledge a complete, valid, durably committed batch."""
         return await self._async_acknowledge("ingest", body, token, count)
 
-    async def async_monitoring(
-        self, body: bytes, token: str, count: int, *, schema_version: int = 1
-    ) -> datetime:
-        """Send an atomic collection using an explicitly chosen schema, no fallback."""
-        if type(schema_version) is not int or schema_version not in {1, 2}:
-            raise ProtocolError("unsupported_schema")
+    async def async_monitoring(self, body: bytes, token: str, count: int) -> datetime:
+        """Send an atomic Snapshot v2 collection; pairing/heartbeats remain v1."""
         return await self._async_acknowledge(
-            "monitoring", body, token, count, api_version=schema_version
+            "monitoring", body, token, count, api_version=2
         )
 
     async def _async_acknowledge(

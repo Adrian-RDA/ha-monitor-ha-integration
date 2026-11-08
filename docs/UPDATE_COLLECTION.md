@@ -1,6 +1,6 @@
 # Update-Erfassung und Monitoring Snapshot v2
 
-Stand: Integration **0.3.0**, Laravel-Vertrag aus [PROTOCOL.md](PROTOCOL.md), Abschnitt Monitoring Snapshot v2. Der v2-Empfänger ist bereits implementiert; diese Integration liefert jetzt den Sender. Pairing und Heartbeats bleiben v1. Der autoritative Protokolltext wurde für diese Implementierung nicht verändert.
+Stand: Integration **0.3.1**, Laravel-Vertrag aus [PROTOCOL.md](PROTOCOL.md), Abschnitt Monitoring Snapshot v2. Der v2-Empfänger ist bereits implementiert; diese Integration liefert jetzt den Sender. Pairing und Heartbeats bleiben v1. Der autoritative Protokolltext wurde für diese Implementierung nicht verändert.
 
 ## Vier gemeldete verfügbare Updates
 
@@ -31,11 +31,11 @@ V2 verwendet **einen atomaren Request** mit genau einem Snapshot, höchstens 4.0
 
 Die Erfassung hält bei mehr als 4.096 Quellen eine ausdrücklich teilweise Sammlung. Eine Überschreitung der **Transport-Bytegrenze** stoppt dagegen den Upload mit Reparaturhinweis und erhält den vorherigen Serverstand. Es werden keine unabhängig ersetzenden Fragmente und keine leere Ersatzliste gesendet. Neue Messungen laufen lokal weiter. Monitoring hält maximal zwei eingefrorene Beobachtungen; JSON-Serialisierung findet im HA-Executor statt. Ein Request gleichzeitig und mindestens 15 Sekunden zwischen Versuchen begrenzen die Rate. Retry-After, Backoff und Ablauf der Beobachtungen werden geprüft.
 
-## V1 und Betrieb
+## Betrieb und bestehende Einträge
 
-`monitoring_schema_version: 1` bleibt ausdrücklich wählbar. Dieser Modus sendet unverändert Snapshot v1 an `/api/v1/agents/monitoring`: höchstens 100 angebotene Updates, 65.536 Bytes und eingeschränkte Versionssyntax. Nicht darstellbare angebotene Versionen oder eine fehlerhafte ausgewählte Quelle machen die gesamte v1-Update-Liste nicht verfügbar. Rohversionen werden niemals für v1 umgeschrieben. V2-Fehler lösen keinen automatischen Rückfall aus. Pairing, gespeicherte Zugangsdaten, Heartbeats und Reauthentifizierung benötigen keine Migration.
+Monitoring verwendet ausschließlich Snapshot v2. Die Protokollauswahl ist entfernt; gespeicherte `monitoring_schema_version`-Werte werden beim Laden entfernt. Alle anderen Optionen, Pairing und Zugangsdaten bleiben erhalten. Pairing und Heartbeats bleiben auf ihren dokumentierten v1-Endpunkten. Ein eigener 60-Sekunden-Timer erhält die Erfassung unabhängig von Home Assistants Entitätspolling aufrecht. Nach Reaktivierung ist CPU in der ersten Messung unbekannt und wird ab der zweiten gültigen Messung übertragen. RAM/Disk stehen bereits bei der ersten gültigen Messung zur Verfügung. Deaktivieren/Entfernen beendet Timer und Erfassungsaufgabe.
 
-Produktiver Abnahmetest: Integration auf dem HA-Testsystem aktualisieren und neu laden, Monitoring einschalten, Protokoll 2 und Export-all prüfen. In Laravel vier Angebote, die unveränderten Rohversionen und die beiden nicht direkt installierbaren Quellen kontrollieren. Explizit zuvor gespeicherte Export-Einschränkungen müssen bewusst erweitert werden. Danach eine zusätzliche ausgewählte Quelle vorübergehend deaktivieren: Laravel soll `partial` und die übrigen vier Angebote anzeigen. Skip/Unskip/Installation, Wiederholung nach Verbindungsunterbrechung und unabhängige Heartbeats prüfen. Ein HTTPS-Reverse-Proxy muss die dokumentierte v2-Bodygröße erlauben; die Integration ändert keine Infrastruktur.
+Produktiver Abnahmetest: Integration auf dem HA-Testsystem aktualisieren und neu laden, Monitoring einschalten, Export-all und Ressourcen-Auswahl prüfen. In Laravel vier Angebote, die unveränderten Rohversionen und die beiden nicht direkt installierbaren Quellen kontrollieren. Explizit zuvor gespeicherte Export-Einschränkungen müssen bewusst erweitert werden. Danach eine zusätzliche ausgewählte Quelle vorübergehend deaktivieren: Laravel soll `partial` und die übrigen vier Angebote anzeigen. Skip/Unskip/Installation, Wiederholung nach Verbindungsunterbrechung und unabhängige Heartbeats prüfen. Ein HTTPS-Reverse-Proxy muss die dokumentierte v2-Bodygröße erlauben; die Integration ändert keine Infrastruktur.
 
 Automatisierte Tests ersetzen keinen Hardware-/Live-Laravel-Abnahmetest. Es wurde ausschließlich in diesem Repository gearbeitet; kein Commit und keine Veröffentlichung erfolgen automatisch.
 

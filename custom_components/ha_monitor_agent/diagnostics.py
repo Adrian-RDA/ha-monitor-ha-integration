@@ -6,7 +6,13 @@ from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 
 from . import AgentConfigEntry
-from .const import CONF_ENABLED, CONF_HEARTBEAT_INTERVAL, VERSION
+from .const import (
+    CONF_ENABLED,
+    CONF_EXPORT_METRICS,
+    CONF_HEARTBEAT_INTERVAL,
+    METRIC_KEYS,
+    VERSION,
+)
 
 
 async def async_get_config_entry_diagnostics(
@@ -28,8 +34,22 @@ async def async_get_config_entry_diagnostics(
         "next_attempt": sender.next_attempt,
     }
     if sender.monitoring is not None:
-        uploader = sender.monitoring.uploader
+        monitor = sender.monitoring
+        uploader = monitor.uploader
         result["monitoring"] = {
+            "enabled": uploader.enabled,
+            "collection_success": monitor.last_update_success,
+            "last_observed_at": monitor.data["observed_at"] if monitor.data else None,
+            "metrics": {
+                key: {
+                    "status": monitor.data["metrics"][key]["status"]
+                    if monitor.data
+                    else "unknown",
+                    "exported": key
+                    in entry.options.get(CONF_EXPORT_METRICS, METRIC_KEYS),
+                }
+                for key in METRIC_KEYS
+            },
             "status": uploader.status,
             "last_error": uploader.last_error,
             "pending_snapshots": uploader.pending_snapshots,

@@ -18,6 +18,15 @@ PLATFORMS = [Platform.SENSOR]
 
 async def async_setup_entry(hass: HomeAssistant, entry: AgentConfigEntry) -> bool:
     """Create an isolated sender using HA's shared, verifying HTTP session."""
+    if "monitoring_schema_version" in entry.options:
+        hass.config_entries.async_update_entry(
+            entry,
+            options={
+                key: value
+                for key, value in entry.options.items()
+                if key != "monitoring_schema_version"
+            },
+        )
     sender = HeartbeatSender(
         hass,
         entry,
@@ -26,9 +35,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AgentConfigEntry) -> boo
     entry.runtime_data = sender
     sender.monitoring = MonitoringCoordinator(hass, entry, sender)
     # Neither local I/O nor the receiver's initial response gates the other task.
-    entry.async_create_background_task(
-        hass, sender.monitoring.async_refresh(), "HA Monitor initial collection"
-    )
+    sender.monitoring.async_start()
     # Local collection must also work with a revoked/unreachable credential.
     try:
         await sender.async_setup()

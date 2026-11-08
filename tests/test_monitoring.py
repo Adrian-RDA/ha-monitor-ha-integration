@@ -1,4 +1,4 @@
-"""Independent collection, Snapshot v1 delivery and lifecycle through real HA."""
+"""Independent collection, Snapshot v2 delivery and lifecycle through real HA."""
 
 import asyncio
 from datetime import timedelta
@@ -19,12 +19,11 @@ from custom_components.ha_monitor_agent.sender import HeartbeatSender
 
 
 async def make_monitor(hass, backend, entry, **options):
-    """Legacy v1 regression harness; v2 tests explicitly override both defaults."""
+    """Construct a sender with an explicitly selected export scope for tests."""
     hass.config_entries.async_update_entry(
         entry,
         options={
             "monitoring_enabled": True,
-            "monitoring_schema_version": 1,
             "export_all_updates": False,
             **options,
         },
@@ -148,13 +147,10 @@ async def test_retry_after_minimum_and_backoff_cap(hass, backend, entry, freezer
     assert 450 <= monitor.uploader._delay <= 900
 
 
-@pytest.mark.parametrize("schema_version", [1, 2])
 async def test_credential_failure_stops_both_uploads_but_keeps_collection(
-    hass, backend, entry, schema_version
+    hass, backend, entry
 ):
-    monitor = await make_monitor(
-        hass, backend, entry, monitoring_schema_version=schema_version
-    )
+    monitor = await make_monitor(hass, backend, entry)
     backend.revoked = True
     await monitor.uploader.async_send_once()
     await hass.async_block_till_done()

@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -33,12 +34,10 @@ from .const import (
     CONF_EXPORT_METRICS,
     CONF_INSTANCE_ID,
     CONF_MONITORING_ENABLED,
-    CONF_MONITORING_SCHEMA_VERSION,
     CONF_SYSTEM_UPDATES,
     CONF_UPDATE_ENTITIES,
     DOMAIN,
     INVENTORY_KEYS,
-    MAX_BODY_BYTES,
     MAX_MONITORING_BODY_BYTES,
     METRIC_KEYS,
     MONITORING_INTERVAL,
@@ -64,31 +63,55 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER,
             name="HA Monitor local collection",
             config_entry=entry,
-            update_interval=timedelta(seconds=MONITORING_INTERVAL),
         )
         self._resources = ResourceCollector(hass.config.config_dir)
         self.update_inventory = UpdateInventory("unknown")
         self.export_update_inventory = UpdateInventory("unknown")
         self.uploader = MonitoringUploader(hass, entry, heartbeat)
-        # Keep collection subscribed independently of optional local entities.
-        self._unsubscribe = self.async_add_listener(lambda: None)
         self.entry = entry
+        self._unsubscribe = None
+        self._collection_task: asyncio.Task[None] | None = None
+        self._stopped = False
+        entry.async_on_unload(self.async_stop)
+
+    @callback
+    def async_start(self) -> None:
+        """Run the agent clock independently of HA's entity polling preference."""
+        if self._stopped or self._unsubscribe is not None:
+            return
+        self._unsubscribe = async_track_time_interval(
+            self.hass,
+            self._async_collect,
+            timedelta(seconds=MONITORING_INTERVAL),
+            cancel_on_shutdown=True,
+        )
+        self._async_collect(dt_util.utcnow())
+
+    @callback
+    def _async_collect(self, _now: datetime) -> None:
+        # Skip ticks during slow collection rather than queueing refresh tasks.
+        if (
+            self._stopped
+            or self._collection_task is not None
+            and not self._collection_task.done()
+        ):
+            return
+        self._collection_task = self.entry.async_create_background_task(
+            self.hass,
+            self.async_refresh(),
+            "HA Monitor local collection",
+            eager_start=False,
+        )
 
     @property
     def export_all(self) -> bool:
         return self.entry.options.get(CONF_EXPORT_ALL_UPDATES, True)
 
     def _project(self, inventory: UpdateInventory) -> dict[str, Any]:
-        if self.uploader.schema_version == 1:
-            return inventory.as_protocol()
         return inventory.as_protocol_v2("all" if self.export_all else "selected")
 
     def _issues(self, inventory: UpdateInventory) -> dict[str, int]:
-        return (
-            inventory.protocol_issues
-            if self.uploader.schema_version == 1
-            else inventory.v2_issues
-        )
+        return inventory.v2_issues
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -106,7 +129,7 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.entry.options.get(CONF_DISCOVER_UPDATES, True) or self.export_all
         )
         self.update_inventory = self._collect_updates(discover=discover)
-        # Local discovery must not expand v1's complete replacement set. Reading
+        # Local discovery must not expand the explicitly selected export set. Reading
         # the explicit scope separately also isolates failures in other sources.
         if self.export_all or not discover:
             self.export_update_inventory = self.update_inventory
@@ -191,9 +214,15 @@ class MonitoringCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ir.async_delete_issue(self.hass, DOMAIN, self.update_export_issue_id)
 
     async def async_stop(self) -> None:
+        self._stopped = True
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
+        if self._collection_task is not None:
+            self._collection_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._collection_task
+            self._collection_task = None
         await self.async_shutdown()
         await self.uploader.async_stop()
 
@@ -222,12 +251,8 @@ class MonitoringUploader:
         self.last_upload: datetime | None = None
         self.failures = 0
         self.dropped_snapshots = 0
-        self.schema_version = entry.options.get(
-            CONF_MONITORING_SCHEMA_VERSION, MONITORING_SCHEMA_VERSION
-        )
-        self.max_body_bytes = (
-            MAX_MONITORING_BODY_BYTES if self.schema_version == 2 else MAX_BODY_BYTES
-        )
+        self.schema_version = MONITORING_SCHEMA_VERSION
+        self.max_body_bytes = MAX_MONITORING_BODY_BYTES
         self._pending: FrozenSnapshot | None = None
         self._latest: FrozenSnapshot | None = None
         self._send_lock = asyncio.Lock()
@@ -378,7 +403,6 @@ class MonitoringUploader:
                 body,
                 self.entry.data[CONF_AGENT_TOKEN],
                 1,
-                schema_version=self.schema_version,
             )
         except AuthenticationError:
             self.status, self.last_error = "reauth_required", "invalid_auth"

@@ -48,7 +48,7 @@
     "step": {
       "init": {
         "title": "Monitoring and transmission",
-        "description": "Monitoring Snapshot v2 transmits all discovered update sources by default, including hidden sources and updates installed outside Home Assistant. Failed sources produce partial coverage while known updates are still transmitted. Original versions, categories and the allowed source/device metadata are included. Explicitly saved source restrictions remain in effect. Disable all-source transmission to export only Core/OS and selected sources. Monitoring transmission is initially off; local collection continues when uploads are paused. Select protocol 1 only for an older receiver; its stricter limits can make the entire update collection unavailable. Changes reload the integration and discard retry buffers.",
+        "description": "Monitoring Snapshot v2 transmits all discovered update sources by default, including hidden sources and updates installed outside Home Assistant. Failed sources produce partial coverage while known updates are still transmitted. Original versions, categories and the allowed source/device metadata are included. Explicitly saved source restrictions remain in effect. Disable all-source transmission to export only Core/OS and selected sources. Monitoring transmission is initially off; local collection continues when uploads are paused. Changes reload the integration and discard retry buffers. Collection runs on the agent’s own 60-second clock, independently of Home Assistant entity polling.",
         "data": {
           "enabled": "Enable transmission",
           "monitoring_enabled": "Transmit monitoring snapshots",
@@ -56,8 +56,7 @@
           "system_updates": "Collect Supervisor Core/OS updates",
           "update_entities": "Additional update sources to transmit",
           "discover_updates": "Discover all update sources locally",
-          "export_all_updates": "Transmit all discovered update sources",
-          "monitoring_schema_version": "Monitoring protocol (2 recommended; 1 for older receivers)"
+          "export_all_updates": "Transmit all discovered update sources"
         }
       }
     }
@@ -121,11 +120,11 @@
     },
     "monitoring_blocked": {
       "title": "HA Monitor monitoring uploads stopped",
-      "description": "Monitoring Snapshot upload failed: {reason}. A payload_too_large collection exceeds the selected protocol limit; the previous server projection is retained. Reduce the export scope or metadata size and reload. HTTP 404 means this protocol endpoint is absent; 409 means a snapshot ID was reused with changed content. Correct compatibility, HTTPS or clock settings, then reload. There is no automatic protocol fallback. Local collection and heartbeats continue independently."
+      "description": "Monitoring Snapshot v2 upload failed: {reason}. A payload_too_large collection exceeds 2 MiB; the previous server projection is retained. Reduce the export scope or metadata size and reload. HTTP 404 means the v2 endpoint is absent; 409 means a snapshot ID was reused with changed content. Correct compatibility, HTTPS or clock settings, then reload. Local collection and heartbeats continue independently."
     },
     "update_export_incomplete": {
       "title": "HA Monitor update transmission is limited",
-      "description": "Some sources were omitted by the export selection or could not be collected completely. Known offered updates outside the selection: {omitted}. Reason: {reason}. Check the source selection and availability under Settings → Devices & services → HA Monitor → Configure. Snapshot v2 transmits known records with partial coverage; their offered count is a lower bound. Protocol 1 may block the entire update list for a failed source or incompatible version. Local collection and heartbeats continue."
+      "description": "Some sources were omitted by the export selection or could not be collected completely. Known offered updates outside the selection: {omitted}. Reason: {reason}. Check the source selection and availability under Settings → Devices & services → HA Monitor → Configure. Snapshot v2 transmits known records with partial coverage; their offered count is a lower bound. Local collection and heartbeats continue."
     }
   },
   "selector": {

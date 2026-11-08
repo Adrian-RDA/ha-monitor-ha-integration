@@ -1,5 +1,6 @@
 """Config flow tests through HA's flow manager and a verified TLS backend."""
 
+import asyncio
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -148,4 +149,36 @@ async def test_default_options_enable_v2_all_source_transmission(hass, backend, 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["discover_updates"] is True
     assert entry.options["export_all_updates"] is True
-    assert entry.options["monitoring_schema_version"] == 2
+    assert "monitoring_schema_version" not in entry.options
+
+
+@pytest.mark.parametrize("legacy_version", [1, 2])
+async def test_old_protocol_option_removed_without_losing_settings_or_pairing(
+    hass, backend, entry, legacy_version
+):
+    original_data = dict(entry.data)
+    options = {
+        "monitoring_enabled": True,
+        "enabled": True,
+        "export_metrics": ["cpu_percent", "memory_percent", "storage_percent"],
+        "export_all_updates": False,
+        "update_entities": ["update.selected"],
+        "monitoring_schema_version": legacy_version,
+    }
+    hass.config_entries.async_update_entry(entry, options=options)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await asyncio.wait_for(backend.monitoring_started.wait(), 2)
+    async with entry.runtime_data.monitoring.uploader._send_lock:
+        pass
+    assert dict(entry.data) == original_data and backend.pair_calls == 0
+    assert dict(entry.options) == {
+        key: value
+        for key, value in options.items()
+        if key != "monitoring_schema_version"
+    }
+    assert backend.monitoring_requests[-1][0]["schema_version"] == 2
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert "monitoring_schema_version" not in {
+        str(key) for key in result["data_schema"].schema
+    }
+    assert await hass.config_entries.async_unload(entry.entry_id)
