@@ -1,6 +1,6 @@
 # Home Assistant Custom Integration – Snapshot v2 architecture
 
-Implemented in **0.3.2**. [PROTOCOL.md](PROTOCOL.md) is the authoritative Laravel contract; [README](../README.md) covers installation and operation. Work is limited to this repository.
+Snapshot v2 implemented in **0.3.2**, independent Health v1 added in **0.4.0**. [PROTOCOL.md](PROTOCOL.md) is the authoritative Laravel contract; [README](../README.md) covers installation and operation. Work is limited to this repository.
 
 ## Local collection and export scope
 
@@ -36,3 +36,7 @@ Tests use real HA entries, flows, registries, update entities, coordinators and 
 - [HA 2026.11 update state/progress](https://github.com/home-assistant/core/blob/2026.11.0/homeassistant/components/update/entity.py)
 
 No HA source was copied. No Laravel, infrastructure or remote publication changes are included.
+
+## Sprint 6 – independent Health v1
+
+See [Health collection](HEALTH_COLLECTION.md) for the four collectors, explicit consent, native backup evidence and limitations, deterministic report bounds, separate worker/retry lifecycle and validator tests. `HeartbeatSender.health` owns its independent coordinator/uploader; `sender.monitoring` retains its existing v2 behavior. Health creates no local entities. Heartbeat requests now also use a concurrency lock to prevent manual and scheduled sends from racing over the same buffer.

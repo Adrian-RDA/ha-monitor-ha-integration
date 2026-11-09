@@ -263,9 +263,11 @@ class MonitoringUploader:
         self._stopped = False
         self._next_attempt: datetime | None = None
 
+    issue_translation_key = "monitoring_blocked"
+
     @property
     def issue_id(self) -> str:
-        return f"monitoring_blocked_{self.entry.entry_id}"
+        return f"{self.issue_translation_key}_{self.entry.entry_id}"
 
     @property
     def pending_snapshots(self) -> int:
@@ -295,10 +297,14 @@ class MonitoringUploader:
                 for key, value in snapshot["metrics"].items()
             },
         }
+        await self._async_queue(exported)
+
+    async def _async_queue(self, exported: dict[str, Any]) -> None:
+        """Freeze an export once and retain a bounded pending/latest pair."""
         # Large collections must not perform JSON serialization on HA's event loop.
         frozen = FrozenSnapshot(
             await self.hass.async_add_executor_job(encode_payload, exported),
-            datetime.fromisoformat(snapshot["observed_at"]),
+            datetime.fromisoformat(exported["observed_at"]),
         )
         if self._stopped or self.status in {"blocked", "reauth_required"}:
             return
@@ -374,7 +380,7 @@ class MonitoringUploader:
             self.issue_id,
             is_fixable=False,
             severity=ir.IssueSeverity.ERROR,
-            translation_key="monitoring_blocked",
+            translation_key=self.issue_translation_key,
             translation_placeholders={
                 "reason": reason
                 + ("; " + ", ".join(validation_fields) if validation_fields else "")
@@ -404,11 +410,7 @@ class MonitoringUploader:
             body = self._envelope(self._pending)
             if len(body) > self.max_body_bytes:
                 raise ProtocolError("payload_too_large")
-            received_at = await self.heartbeat.client.async_monitoring(
-                body,
-                self.entry.data[CONF_AGENT_TOKEN],
-                1,
-            )
+            received_at = await self._async_upload(body)
         except AuthenticationError:
             self.status, self.last_error = "reauth_required", "invalid_auth"
             self.heartbeat.async_auth_failed()
@@ -441,6 +443,11 @@ class MonitoringUploader:
             self._delay = 15
             ir.async_delete_issue(self.hass, DOMAIN, self.issue_id)
         self._next_attempt = dt_util.utcnow() + timedelta(seconds=self._delay)
+
+    async def _async_upload(self, body: bytes) -> datetime:
+        return await self.heartbeat.client.async_monitoring(
+            body, self.entry.data[CONF_AGENT_TOKEN], 1
+        )
 
     async def async_stop(self) -> None:
         self._stopped = True

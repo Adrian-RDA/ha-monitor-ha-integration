@@ -221,6 +221,10 @@ class AgentClient:
             "monitoring", body, token, count, api_version=2
         )
 
+    async def async_health(self, body: bytes, token: str) -> datetime:
+        """Send a complete Health v1 report with independent endpoint budgets."""
+        return await self._async_acknowledge("health", body, token, 1)
+
     async def _async_acknowledge(
         self,
         endpoint: str,

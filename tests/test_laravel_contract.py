@@ -42,14 +42,23 @@ exit($failed ? 1 : 0);
 """
 
 
-async def validate_with_laravel(hass, body):
+async def validate_with_laravel(hass, body, *, health=False):
     def validate():
         return subprocess.run(
-            [str(Path(LARAVEL_PATH) / "vendor/bin/sail"), "php", "-r", PHP_VALIDATE],
+            [
+                str(Path(LARAVEL_PATH) / "vendor/bin/sail"),
+                "php",
+                "-r",
+                PHP_VALIDATE.replace(
+                    "MonitoringSnapshotV2Request", "HealthReportRequest"
+                ).replace("/api/v2/agents/monitoring", "/api/v1/agents/health")
+                if health
+                else PHP_VALIDATE,
+            ],
             input=body,
             capture_output=True,
             cwd=LARAVEL_PATH,
-            timeout=20,
+            timeout=45,
             check=False,
         )
 
@@ -107,4 +116,61 @@ async def test_startup_and_161_source_partial_inventory_pass_real_laravel_valida
         )
     await validate_with_laravel(
         hass, monitor.uploader._envelope(monitor.uploader._latest)
+    )
+
+
+@pytest.mark.timeout(60)
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "complete",
+        "startup",
+        "selected",
+        "overflow",
+        "backup_running",
+        "backup_ok",
+        "backup_failed",
+    ],
+)
+async def test_health_payloads_pass_real_laravel_validator(
+    hass, backend, entry, scenario
+):
+    from homeassistant.components.backup.const import DATA_MANAGER
+    from homeassistant.components.backup.manager import (
+        BackupManager,
+        CoreBackupReaderWriter,
+        CreateBackupState,
+        IdleEvent,
+    )
+
+    from .test_health import make_health
+    from .test_health_collectors import emit, repair
+
+    repair(hass)
+    if scenario == "startup":
+        hass.set_state(CoreState.starting)
+    if scenario == "overflow":
+        for i in range(1001):
+            hass.states.async_set(f"sensor.{'x' * 235}{i:04}", "unavailable")
+    else:
+        hass.states.async_set("sensor.health_problem", "unavailable")
+    manager = BackupManager(hass, CoreBackupReaderWriter(hass))
+    hass.data[DATA_MANAGER] = manager
+    manager.async_on_backup_event(IdleEvent())
+    health = await make_health(
+        hass,
+        backend,
+        entry,
+        health_all_entities=scenario != "selected",
+        health_entities=["sensor.health_problem"],
+    )
+    if scenario.startswith("backup_"):
+        emit(manager, CreateBackupState.IN_PROGRESS)
+        if scenario == "backup_ok":
+            emit(manager, CreateBackupState.COMPLETED)
+        elif scenario == "backup_failed":
+            emit(manager, CreateBackupState.FAILED, reason="backup_agent_unreachable")
+        await health.async_collect()
+    await validate_with_laravel(
+        hass, health.uploader._envelope(health.uploader._latest), health=True
     )

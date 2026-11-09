@@ -48,7 +48,7 @@
     "step": {
       "init": {
         "title": "Monitoring and transmission",
-        "description": "Monitoring Snapshot v2 transmits all discovered update sources by default, including hidden sources and updates installed outside Home Assistant. Failed sources produce partial coverage while known updates are still transmitted. Original versions, categories and the allowed source/device metadata are included. Explicitly saved source restrictions remain in effect. Disable all-source transmission to export only Core/OS and selected sources. Monitoring transmission is initially off; local collection continues when uploads are paused. Changes reload the integration and discard retry buffers. Collection runs on the agent’s own 60-second clock, independently of Home Assistant entity polling.",
+        "description": "Monitoring Snapshot v2 transmits all discovered update sources by default, including hidden sources and updates installed outside Home Assistant. Failed sources produce partial coverage while known updates are still transmitted. Original versions, categories and the allowed source/device metadata are included. Explicitly saved source restrictions remain in effect. Disable all-source transmission to export only Core/OS and selected sources. Monitoring transmission is initially off; local collection continues when uploads are paused. Changes reload the integration and discard retry buffers. Collection runs on the agent’s own 60-second clock, independently of Home Assistant entity polling. Health v1 is separately opt-in and reports every five minutes. Select approved domains and entities; all-entity export and device associations require separate choices. Names are never transmitted. Backup status remains unknown until a full native backup lifecycle has been observed since loading this integration.",
         "data": {
           "enabled": "Enable transmission",
           "monitoring_enabled": "Transmit monitoring snapshots",
@@ -56,7 +56,12 @@
           "system_updates": "Collect Supervisor Core/OS updates",
           "update_entities": "Additional update sources to transmit",
           "discover_updates": "Discover all update sources locally",
-          "export_all_updates": "Transmit all discovered update sources"
+          "export_all_updates": "Transmit all discovered update sources",
+          "health_enabled": "Enable Health v1 collection and transmission",
+          "health_sections": "Health domains to collect and transmit",
+          "health_all_entities": "Transmit all enabled unavailable entities",
+          "health_entities": "Unavailable entity export selection",
+          "health_devices": "Include local device IDs for unavailable entities"
         }
       }
     }
@@ -125,6 +130,10 @@
     "update_export_incomplete": {
       "title": "HA Monitor update transmission is limited",
       "description": "Some sources were omitted by the export selection or could not be collected completely. Known offered updates outside the selection: {omitted}. Reason: {reason}. Check the source selection and availability under Settings → Devices & services → HA Monitor → Configure. Snapshot v2 transmits known records with partial coverage; their offered count is a lower bound. Local collection and heartbeats continue."
+    },
+    "health_blocked": {
+      "title": "Health report transmission stopped",
+      "description": "The receiver rejected Health v1 transmission ({reason}). Correct the receiver or configuration and reload the integration. Heartbeats and monitoring snapshots run independently."
     }
   },
   "selector": {
@@ -133,6 +142,14 @@
         "cpu_percent": "CPU usage (OS view)",
         "memory_percent": "Memory usage (OS view)",
         "storage_percent": "HA data filesystem usage"
+      }
+    },
+    "health_sections": {
+      "options": {
+        "repairs": "Repairs",
+        "config_entries": "Integration problems",
+        "unavailable_entities": "Unavailable entities",
+        "backup": "Native backup status"
       }
     }
   }

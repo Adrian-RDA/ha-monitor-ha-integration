@@ -1,7 +1,7 @@
 """Constants for HA Monitor's outbound agent."""
 
 DOMAIN = "ha_monitor_agent"
-VERSION = "0.3.2"
+VERSION = "0.4.0"
 CONF_SERVER_URL = "server_url"
 CONF_PAIRING_CODE = "pairing_code"
 CONF_AGENT_TOKEN = "agent_token"
@@ -31,3 +31,12 @@ MAX_MONITORING_BODY_BYTES = 2_097_152
 MONITORING_INTERVAL = 60
 METRIC_KEYS = ("cpu_percent", "memory_percent", "storage_percent")
 INVENTORY_KEYS = ("entities", "devices", "automations", "scenes", "integrations")
+
+CONF_HEALTH_ENABLED = "health_enabled"
+CONF_HEALTH_SECTIONS = "health_sections"
+CONF_HEALTH_ALL_ENTITIES = "health_all_entities"
+CONF_HEALTH_ENTITIES = "health_entities"
+CONF_HEALTH_DEVICES = "health_devices"
+HEALTH_SECTIONS = ("repairs", "config_entries", "unavailable_entities", "backup")
+HEALTH_INTERVAL = 300
+MAX_HEALTH_BODY_BYTES = 262_144

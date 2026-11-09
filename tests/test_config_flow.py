@@ -182,3 +182,29 @@ async def test_old_protocol_option_removed_without_losing_settings_or_pairing(
         str(key) for key in result["data_schema"].schema
     }
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_health_options_explicit_consent_and_source_selection(
+    hass, backend, entry
+):
+    original_data = dict(entry.data)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            "enabled": False,
+            "health_enabled": True,
+            "health_sections": ["repairs", "unavailable_entities"],
+            "health_all_entities": False,
+            "health_entities": ["sensor.approved"],
+            "health_devices": True,
+        },
+    )
+    assert result["type"] == "create_entry"
+    assert entry.options["health_enabled"] is True
+    assert entry.options["health_sections"] == ["repairs", "unavailable_entities"]
+    assert entry.options["health_entities"] == ["sensor.approved"]
+    assert entry.options["health_all_entities"] is False
+    assert entry.options["health_devices"] is True
+    assert entry.options["monitoring_enabled"] is False
+    assert dict(entry.data) == original_data

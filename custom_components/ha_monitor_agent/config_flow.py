@@ -35,6 +35,11 @@ from .const import (
     CONF_ENABLED,
     CONF_EXPORT_ALL_UPDATES,
     CONF_EXPORT_METRICS,
+    CONF_HEALTH_ALL_ENTITIES,
+    CONF_HEALTH_DEVICES,
+    CONF_HEALTH_ENABLED,
+    CONF_HEALTH_ENTITIES,
+    CONF_HEALTH_SECTIONS,
     CONF_INSTANCE_ID,
     CONF_MONITORING_ENABLED,
     CONF_PAIRING_CODE,
@@ -42,6 +47,7 @@ from .const import (
     CONF_SYSTEM_UPDATES,
     CONF_UPDATE_ENTITIES,
     DOMAIN,
+    HEALTH_SECTIONS,
     METRIC_KEYS,
 )
 
@@ -169,6 +175,40 @@ class AgentOptionsFlow(OptionsFlowWithReload):
                         CONF_MONITORING_ENABLED,
                         default=self.config_entry.options.get(
                             CONF_MONITORING_ENABLED, False
+                        ),
+                    ): bool,
+                    probatio.Required(
+                        CONF_HEALTH_ENABLED,
+                        default=self.config_entry.options.get(
+                            CONF_HEALTH_ENABLED, False
+                        ),
+                    ): bool,
+                    probatio.Required(
+                        CONF_HEALTH_SECTIONS,
+                        default=self.config_entry.options.get(
+                            CONF_HEALTH_SECTIONS, list(HEALTH_SECTIONS)
+                        ),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=list(HEALTH_SECTIONS),
+                            multiple=True,
+                            translation_key="health_sections",
+                        )
+                    ),
+                    probatio.Required(
+                        CONF_HEALTH_ALL_ENTITIES,
+                        default=self.config_entry.options.get(
+                            CONF_HEALTH_ALL_ENTITIES, False
+                        ),
+                    ): bool,
+                    probatio.Required(
+                        CONF_HEALTH_ENTITIES,
+                        default=self.config_entry.options.get(CONF_HEALTH_ENTITIES, []),
+                    ): EntitySelector(EntitySelectorConfig(multiple=True)),
+                    probatio.Required(
+                        CONF_HEALTH_DEVICES,
+                        default=self.config_entry.options.get(
+                            CONF_HEALTH_DEVICES, False
                         ),
                     ): bool,
                     probatio.Required(

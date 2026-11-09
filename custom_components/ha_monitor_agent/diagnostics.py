@@ -58,4 +58,24 @@ async def async_get_config_entry_diagnostics(
             "last_upload": uploader.last_upload,
             "updates": sender.monitoring.update_summary(),
         }
+    if sender.health is not None:
+        health = sender.health
+        result["health"] = {
+            "enabled": health.enabled,
+            "status": health.uploader.status,
+            "last_error": health.uploader.last_error,
+            "last_upload": health.uploader.last_upload,
+            "pending_reports": health.uploader.pending_snapshots,
+            "dropped_reports": health.uploader.dropped_snapshots,
+            "last_observed_at": health.data["observed_at"] if health.data else None,
+            "coverage": {
+                key: health.data[key]["coverage"] if health.data else "unknown"
+                for key in (
+                    "repairs",
+                    "config_entries",
+                    "unavailable_entities",
+                    "backup",
+                )
+            },
+        }
     return result

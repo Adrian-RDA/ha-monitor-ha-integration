@@ -13,6 +13,7 @@ These routes are stateless and independent of browser login, CSRF, Fortify and S
 | POST   | `/api/v1/agents/pair`       | One-time code in JSON                                                     |
 | POST   | `/api/v1/agents/ingest`     | `Authorization: Bearer <agent_token>`                                     |
 | POST   | `/api/v1/agents/monitoring` | `Authorization: Bearer <agent_token>`                                     |
+| POST   | `/api/v1/agents/health`     | `Authorization: Bearer <agent_token>`; independent Health v1 schema/limits |
 | POST   | `/api/v2/agents/monitoring` | `Authorization: Bearer <agent_token>`; independent snapshot schema/limits |
 
 ### Pairing
@@ -456,3 +457,128 @@ vendor/bin/sail npm run test:monitoring
 ```
 
 These are Laravel-side fixtures, not verification of a real Shelly installation or of agent 0.2.3 sending v2. The separate sender must implement this exact contract, privacy/selection mapping and HTTPS end-to-end tests before rollout.
+
+## System Health Report v1 (Sprint 6)
+
+`POST /api/v1/agents/health` is an **independent contract**, with integer `schema_version: 1` and the existing instance bearer credential. Pairing, heartbeat ingestion, Monitoring Snapshot v1/v2 and their budgets/semantics are unchanged. Health reports never update contact, heartbeat, HA version, integration version, resources, inventory or updates. Old agents may omit this endpoint indefinitely; missing reports remain unknown.
+
+### Envelope and transport
+
+HTTPS, uncompressed UTF-8 JSON object, `Content-Type: application/json`, maximum **262,144 actual body bytes**, depth **16**. Health has independent limits of **30 requests/minute/source IP** before authentication and **6/minute/instance** after authentication, including invalid reports and retries. Respect `Retry-After`; these limits do not consume the heartbeat or Snapshot v2 allowances. Put reverse-proxy body/time limits in front of PHP as well.
+
+One complete report per request; no batching, patching, staging or chunks. All fields below are required, including explicit nulls. Unknown fields at every level are rejected. RFC3339 timestamps require an explicit offset or `Z`, with at most six fractional digits. `sent_at` and `observed_at` must be within the past 24 hours and at most five minutes ahead of server time; `observed_at <= sent_at`. Backup timestamps may be arbitrarily old, but cannot exceed `observed_at`. Identities are instance-local, not globally correlated with other installations.
+
+```json
+{
+    "schema_version": 1,
+    "instance_id": "7e9dcd76-5fb2-4ee1-8ee8-316f6d498fc1",
+    "sent_at": "2026-11-08T18:00:01Z",
+    "report": {
+        "report_id": "7e3e136a-42f2-451b-8212-7b65e071ebdd",
+        "observed_at": "2026-11-08T18:00:00Z",
+        "repairs": {
+            "coverage": "complete",
+            "scope": "all",
+            "total": 1,
+            "items": [
+                {
+                    "key": "homeassistant:example_issue",
+                    "domain": "homeassistant",
+                    "name": "Operator-approved repair label",
+                    "status": "open",
+                    "severity": "warning"
+                }
+            ]
+        },
+        "config_entries": {
+            "coverage": "complete",
+            "scope": "all",
+            "total": 1,
+            "items": [
+                {
+                    "key": "local_entry_id",
+                    "domain": "mqtt",
+                    "name": null,
+                    "state": "setup_retry"
+                }
+            ]
+        },
+        "unavailable_entities": {
+            "coverage": "partial",
+            "scope": "selected",
+            "total": null,
+            "items": [
+                {
+                    "entity_id": "sensor.room_temperature",
+                    "name": null,
+                    "device": { "id": "local_device_id", "name": null }
+                }
+            ]
+        },
+        "backup": {
+            "coverage": "complete",
+            "status": "failed",
+            "last_success_at": "2026-11-06T02:05:00Z",
+            "last_attempt_at": "2026-11-08T02:00:00Z",
+            "error_code": "storage"
+        }
+    }
+}
+```
+
+### Collection quality and bounds
+
+The three collections always contain exactly `coverage`, `scope`, `total`, `items`. They describe **matching findings**, not the number of all entities/integrations in HA.
+
+| Field                   | Meaning                                                                                                                                                                           |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `coverage: complete`    | Successfully collected every matching finding within the declared export scope. `total` must equal item count, including a real zero.                                             |
+| `coverage: partial`     | Only part of that scope could be collected/exported. Known findings may be sent; `total` is a known matching total or null. Never treat an empty partial collection as clear.     |
+| `coverage: unknown`     | No reliable collection result yet. Requires `total: null, items: []`.                                                                                                             |
+| `coverage: unavailable` | Collection temporarily failed. Requires `total: null, items: []`; do not resend stale findings with a fresh observation time.                                                     |
+| `coverage: unsupported` | Collector/environment does not support this domain. Requires `total: null, items: []`.                                                                                            |
+| `scope: all`            | Entire explicitly approved domain of this installation, including applicable privacy exclusions documented by the sender. It never authorizes exporting every HA state/attribute. |
+| `scope: selected`       | Only explicitly selected sources/entities. Completeness is limited to that selection, not installation-wide.                                                                      |
+| `total`                 | Null or a strict JSON integer 0–1,000,000, never smaller than item count. No numeric-string/boolean coercion.                                                                     |
+
+Caps: **100 repairs, 256 config entries, 1,000 unavailable entities**. If a collection exceeds a cap or the body budget, the sender may explicitly send a deterministic subset with `coverage: partial` and the known total (otherwise null). This is a replacement observation of a partial collection; do not split it into several purportedly complete reports. Omitted findings in a partial/changed selection do not prove resolution. An entirely unusable/unsupported domain still needs its explicit neutral collection in the report.
+
+Record keys and device IDs are nonempty ASCII strings up to 128 characters, starting with an alphanumeric character and followed only by alphanumerics, `_`, `.`, `:`, `-`. Use a deterministic instance-local digest when a source identity cannot meet that form; never use credentials in an identity. Repair/config-entry keys must be unique within their section; entity IDs must also be unique. Domains match `[a-z][a-z0-9_]*`, maximum 64 characters. `name` is null or 1–120 Unicode characters without control/format/private-use characters. Empty strings are rejected. Names are optional information but the **field is required**; export null if not approved. No free-form exception text, traces, URLs, config-entry data/options, entity states/attributes or credentials are accepted. Descriptive names render as text, never HTML.
+
+### Findings
+
+- **Repairs:** `key`, `domain`, `name`, `status`, `severity`. Stable `key` identifies a repair across observations, typically `domain:issue_id`. Only still-open HA issue-registry repairs belong here. `status` is `open` or `ignored`; ignored does not mean resolved. `severity` is `critical`, `error` or `warning`. Preserve the source severity; do not infer it from translated titles. Critical/error repairs are problems; warnings are maintenance. Missing items imply no current finding only within a successfully complete, comparable selection; do not invent resolved events from a collection failure.
+- **Config entries:** `key` is the stable HA config-entry ID, followed by `domain`, `name`, `state`. `setup_error`, `setup_retry`, `migration_error`, `failed_unload` are reported failures; `not_loaded`, `setup_in_progress`, `unload_in_progress` are maintenance/transitional observations. Do not export deliberately disabled entries as failed integrations. Loaded entries do not belong in this finding list. One failed entry does not prove the entire integration domain is broken. YAML-only integration failures not reliably attributable to a config entry require a future contract extension; do not fabricate entries.
+- **Unavailable entities:** `entity_id`, `name`, `device`. Entity IDs match `[a-z_][a-z0-9_]*\.[a-z0-9_]+`, maximum 256 characters. Only selected/approved **enabled** entities with an actual HA state of `unavailable` belong here. `unknown`, absent states, disabled registry entries and normal `off` states must not be relabeled unavailable. No state values or attributes leave HA. `device` is explicitly null or exactly `{ "id": "…", "name": null }` (name may also be approved text). The UI counts distinct associated device IDs among represented unavailable entities. This does **not** prove that the device is offline; one device may own both working and unavailable entities. Missing associations and partial lists cannot provide an installation-wide affected-device total.
+
+### Backup observation
+
+`backup` always has `coverage`, `status`, `last_success_at`, `last_attempt_at`, `error_code`. Collect only from an authoritative, explicitly approved HA backup source; do not infer success from filenames, file age, update availability or heartbeat freshness. Report only aggregate status/times, never backup contents, download URLs, paths, passwords, encryption keys or raw exceptions.
+
+- Coverage is `complete`, `unknown`, `unavailable` or `unsupported`. A non-complete observation requires `status: unknown` and all three metadata fields null. There is no partial multi-source merge in v1.
+- Status: `ok` (latest attempt succeeded), `failed` (latest attempt failed), `running` (latest attempt still running), `never` (reliably no prior attempt), `unknown` (outcome cannot be established).
+- `last_attempt_at` is the **start time** of the latest attempt; it is required for `ok`, `failed`, `running`. `last_success_at` is the **completion time** of the latest successful run; required for `ok`, otherwise nullable. For `ok`, completion must be at or after attempt start. For other statuses, a known successful completion must be at or before the latest attempt start. `never` requires both null. A backup in progress need not become failed merely because no completion exists yet.
+- `error_code` is required and non-null only for `failed`, otherwise null. Allowed codes: `authentication`, `connection`, `storage`, `insufficient_space`, `timeout`, `unknown`. Map exceptions locally to this bounded vocabulary. `unknown` means a known failed attempt without a more precise safe classification, not an unknown outcome.
+- Only a failed latest attempt is a problem. `never` is maintenance. Unknown/unsupported collection is a data gap; an old successful timestamp alone does not trigger a made-up overdue-backup rule. Operator-defined age policies and alerting are subsequent work.
+
+### Commit, retries, history and presentation
+
+HTTP 200 is returned only after the report and current projection have committed synchronously to PostgreSQL:
+
+```json
+{ "accepted": 1, "duplicates": 0, "received_at": "2026-11-08T18:00:01+00:00" }
+```
+
+The instance comes exclusively from the bearer token and must match the UUID in the body (403 otherwise). Active status and credential are rechecked under the existing instance row lock, serializing ingestion with credential revocation. `report_id` is a UUID, normalized lowercase, in a **separate namespace** from heartbeat/snapshot IDs. Generate a fresh UUID for each newly collected observation, even when the findings did not change; retry with the original ID and original observation.
+
+Duplicate content returns `accepted: 0, duplicates: 1`. Reuse of an ID with different valid report content returns **409**, without any writes. Hashes include schema version and all report fields; object-key order, item order, equivalent UTC offsets and UUID letter case do not affect identity. `sent_at` is transport metadata and may advance on retries. All other errors/retry actions follow the earlier transport table; additionally, 409 is a permanent sender identity error, not a transient retry. Never echo the request body/token to logs.
+
+Every accepted unique report is retained, including identical findings under a new observation ID and late/equal-time reports. The current projection advances only on **strictly newer observation time**; late/equal reports cannot freshen or regress it. Equal timestamps with different IDs are archived, with the first committed current observation retained. No transitions are reconstructed from late reports. Full bounded reports double as deduplication receipts: default **30-day** retention by server receipt time; `monitoring:prune` removes at most **10,000** expired reports hourly. Backlogs can delay physical deletion; UI history excludes expired records immediately. The current projection remains as last known state. This deliberately uses two additive tables and avoids a separate receipt/transition subsystem; repeated full-report storage is the explicit volume tradeoff. At sustained high volume, monitor retention backlog/disk use before increasing limits.
+
+Re-pairing leaves the existing pairing contract untouched. The Health projection is internally tied to the credential epoch: it is hidden after credential replacement until a new unique report arrives; historical reports/deduplication remain. A replay cannot resurrect an old projection. Revoked/disabled installations may retain last-known findings but cannot produce current problem alerts.
+
+Recommended collection: every **five minutes**, coalescing changes when useful, bounded by six upload attempts/minute. Keep HTTP async/non-blocking, validate TLS, respect `Retry-After`, use bounded exponential backoff/jitter and bounded buffers. Coalesce unsent observations where necessary; never block HA startup/core or other integrations. Heartbeats retain their own independent schedule. Sender tests should cover supported HA APIs/version changes, opt-in selection, missing/unsupported sources, overflow as explicit partial coverage, unload cancellation and server unavailability. This repository implements only the receiver/UI, not the Python collector.
+
+A report older than **600 seconds** is stale independently of the heartbeat's 180-second contact window. Cockpit current-problem/maintenance counts require both fresh Health data and an online heartbeat. Otherwise show last-known findings neutrally. Missing reports stay neutral. Current critical/error repairs, failed entries, unavailable entities and failed backups are **observations**, not a synthetic score or a declaration that HA/devices are offline. Warning repairs/transitional entries/no backup attempt are maintenance; collection gaps/selected scope remain separate uncertainty. Counts can overlap in cause and must not be treated as distinct incidents.
+
+Web reads use existing `instances.view` and instance ACLs; hidden instances remain 404 on every full/partial reload. Cockpit exposes summaries only, never full records or the internal credential hash. Detail exposes the current bounded report and at most 20 retained historical summaries, with per-section quality and searchable, progressive record lists. Both refresh through the existing ten-second polling. Stable source identities, original states/severities, observation/receipt times, retained reports and explicit coverage allow future alarm rules to distinguish observed, missing and resolved evidence; no alert delivery, inferred resolution event or new user permission is introduced here.

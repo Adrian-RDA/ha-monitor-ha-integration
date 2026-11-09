@@ -19,6 +19,8 @@ import trustme
 
 from custom_components.ha_monitor_agent.const import DOMAIN
 
+from .health_backend import validate_health
+
 
 def validate_updates_v2(updates):
     """Independent receiver-side contract checks; no integration validators used."""
@@ -171,6 +173,12 @@ class LaravelBackend:
         self.monitoring_commit_then_fail = False
         self.monitoring_gate = None
         self.monitoring_started = asyncio.Event()
+        self.health_requests = []
+        self.health_stored = {}
+        self.health_responses = deque()
+        self.health_commit_then_fail = False
+        self.health_gate = None
+        self.health_started = asyncio.Event()
         self.limits = {
             "heartbeat_interval_seconds": 60,
             "max_batch_events": 100,
@@ -425,6 +433,41 @@ class LaravelBackend:
             }
         )
 
+    async def health(self, request):
+        raw = await request.read()
+        payload = await request.json()
+        self.health_requests.append((payload, dict(request.headers), len(raw)))
+        self.health_started.set()
+        if self.health_gate is not None:
+            await self.health_gate.wait()
+        assert request.secure and request.content_type == "application/json"
+        assert len(raw) <= 262144
+        assert request.headers.get("Content-Encoding") is None
+        assert request.headers["Authorization"] == f"Bearer {self.token}"
+        if self.revoked:
+            return web.json_response({}, status=401)
+        assert payload["instance_id"] == self.instance_id
+        validate_health(payload)
+        if self.health_responses:
+            status, headers = self.health_responses.popleft()
+            return web.json_response({}, status=status, headers=headers)
+        report = payload["report"]
+        key = report["report_id"]
+        duplicate = key in self.health_stored
+        if duplicate and self.health_stored[key] != report:
+            return web.json_response({}, status=409)
+        self.health_stored[key] = report
+        if self.health_commit_then_fail:
+            self.health_commit_then_fail = False
+            return web.json_response({}, status=503)
+        return web.json_response(
+            {
+                "accepted": int(not duplicate),
+                "duplicates": int(duplicate),
+                "received_at": dt_util.utcnow().isoformat(),
+            }
+        )
+
 
 @pytest.fixture
 async def backend(hass, socket_enabled):
@@ -441,6 +484,7 @@ async def backend(hass, socket_enabled):
     app.router.add_post("/api/v1/agents/ingest", backend.ingest)
     app.router.add_post("/api/v1/agents/monitoring", backend.monitoring)
     app.router.add_post("/api/v2/agents/monitoring", backend.monitoring)
+    app.router.add_post("/api/v1/agents/health", backend.health)
     server = TestServer(app, scheme="https")
     await server.start_server(ssl=server_context)
     backend.url = str(server.make_url("/")).rstrip("/")
@@ -482,6 +526,8 @@ async def backend(hass, socket_enabled):
             backend.gate.set()
         if backend.monitoring_gate is not None:
             backend.monitoring_gate.set()
+        if backend.health_gate is not None:
+            backend.health_gate.set()
     await server.close()
     loop.set_exception_handler(original_exception_handler)
 

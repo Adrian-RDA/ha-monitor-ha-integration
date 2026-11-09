@@ -43,6 +43,7 @@ from .const import (
 
 if TYPE_CHECKING:
     from . import AgentConfigEntry
+    from .health import HealthCoordinator
     from .monitoring import MonitoringCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -70,8 +71,10 @@ class HeartbeatSender:
         self._listeners: set[Callable[[], None]] = set()
         self._task: asyncio.Task[None] | None = None
         self._stopped = False
+        self._send_lock = asyncio.Lock()
         self._delay = float(entry.data[CONF_HEARTBEAT_INTERVAL])
         self.monitoring: MonitoringCoordinator | None = None
+        self.health: HealthCoordinator | None = None
 
     @property
     def pending_events(self) -> int:
@@ -117,6 +120,8 @@ class HeartbeatSender:
         self._stopped = True
         if self.monitoring is not None:
             await self.monitoring.async_stop()
+        if self.health is not None:
+            await self.health.async_stop()
         self.next_attempt = None
         if self._task is not None:
             self._task.cancel()
@@ -184,6 +189,13 @@ class HeartbeatSender:
         return body, events
 
     async def async_send_once(self, *, initial: bool = False) -> None:
+        """Bound concurrency even when an explicit send meets the timer."""
+        if self._send_lock.locked():
+            return
+        async with self._send_lock:
+            await self._async_send_once(initial=initial)
+
+    async def _async_send_once(self, *, initial: bool = False) -> None:
         """Transmit or record a safe failure; never acknowledge missing events."""
         if self._stopped or self.status == "reauth_required":
             return
@@ -260,7 +272,7 @@ class HeartbeatSender:
 
     @callback
     def async_auth_failed(self) -> None:
-        """Stop both upload paths while keeping local collection alive."""
+        """Stop authenticated uploads while keeping local collection alive."""
         self.status = "reauth_required"
         self.last_error = "invalid_auth"
         self.next_attempt = None

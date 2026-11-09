@@ -2,7 +2,7 @@
 
 ![HA Monitor](custom_components/ha_monitor_agent/brand/icon.png)
 
-Asynchroner, ausgehender Monitoring-Agent für den Laravel-Empfänger von HA Monitor. Domain: `ha_monitor_agent`, Version: `0.3.2` (Monitoring Snapshot v2). Unterstützt Home Assistant **ab 2026.10.4**, Python **3.14.2+**. Nutzt `psutil>=7.2.2`; System Monitor und andere zusätzliche Integrationen werden nicht benötigt.
+Asynchroner, ausgehender Monitoring-Agent für den Laravel-Empfänger von HA Monitor. Domain: `ha_monitor_agent`, Version: `0.4.0` (Monitoring Snapshot v2 und System Health v1). Unterstützt Home Assistant **ab 2026.10.4**, Python **3.14.2+**. Nutzt `psutil>=7.2.2`; System Monitor und andere zusätzliche Integrationen werden nicht benötigt.
 
 ## Installation
 
@@ -41,7 +41,7 @@ Die lokale Erfassung läuft im eigenen 60-Sekunden-Takt, auch bei deaktivierter 
 
 Unter **Konfigurieren**:
 
-- **Monitoring-Snapshots übertragen** aktivieren; vorher werden nur Heartbeats übertragen.
+- **Monitoring-Snapshots übertragen** aktivieren; Heartbeats und separat freigegebenes Health-Monitoring laufen unabhängig davon.
 - CPU, RAM und Disk einzeln zur Übertragung auswählen. Nicht ausgewählte Werte werden im vollständigen Snapshot ausdrücklich `unsupported`/null; die lokale Erfassung bleibt vollständig. Inventar wird als die fünf dokumentierten Summen übertragen.
 - **Supervisor Core-/OS-Updates erfassen** aktiviert standardmäßig die auf HA OS vorhandenen nativen Update-Quellen. Identifikation erfolgt über stabile Registry-IDs, auch bei umbenannten Entitäten. OS wird auf Installationen ohne OS-Quelle nicht erfunden. Außerhalb von Supervisor erfolgt keine eigenständige Internetabfrage nach Core-Versionen; dort fehlt ohne ausgewählte Quelle eine zuverlässige Update-Aussage.
 - **Alle Update-Quellen lokal erfassen** ist standardmäßig an. Aktive und versteckte `update.*`-Quellen sowie deaktivierte Registry-Einträge werden ohne zusätzliche Abfragen gelesen. Die Integration aktiviert oder installiert keine Updates.
@@ -54,6 +54,19 @@ Unter **Konfigurieren**:
 Die Monitoring-Protokollauswahl wurde entfernt. Eine gespeicherte Option `monitoring_schema_version` wird beim Laden bereinigt, auch wenn zuvor 1 gewählt war. Alle übrigen Optionen und Zugangsdaten bleiben erhalten; erneutes Pairing ist nicht erforderlich. Pairing und Heartbeats verwenden weiterhin ihre unveränderten v1-Endpunkte. Monitoring verwendet ausschließlich `/api/v2/agents/monitoring`.
 
 Neun zusätzliche lokale Diagnosesensoren (CPU/RAM/Disk, fünf Summen, verfügbare Updates) sind zunächst deaktiviert. Unter dem HA-Monitor-Gerät lassen sie sich einzeln aktivieren. Sie verwenden denselben Datenstand wie der Export, ohne eigene Abfragen. Ressourcen zeigen den `scope`; alle Sensoren zeigen `collection_status`. Fehlende Werte werden als nicht verfügbar angezeigt, niemals als gemessene Null. Der Update-Sensor zählt bei vollständiger lokaler Abdeckung auch die angebotenen, aber nicht zur Übertragung gewählten Updates. Seine Zahl kann deshalb größer als die übertragene Sammlung sein. Ausnahmen beim Lesen einer einzelnen Update-Entität verwerfen die übrigen Beobachtungen nicht. Die Diagnose unterscheidet `known_available`, `export_item_count` (Items im aktuellen Payload) und `blocked_known_available` (bekannte angebotene Updates, die nicht im erzeugten Payload darstellbar sind). Seine bereinigten Zähler unterscheiden offene/übersprungene, deaktivierte, unbekannte und nicht installierbare Updates sowie Erfassungsprobleme; bei unvollständiger Erfassung ist der Sensor nicht verfügbar und die Integrationsdiagnose zeigt weiterhin die bekannte Untergrenze.
+
+## Systemgesundheit (Sprint 6, ab 0.4.0)
+
+Unter **Konfigurieren** lässt sich **Health-v1-Erfassung und -Übertragung** unabhängig von Monitoring Snapshot v2 aktivieren. Standardmäßig ist Health ausgeschaltet. Die freigegebenen Bereiche werden sofort und danach alle **fünf Minuten** als vollständiger Bericht an `/api/v1/agents/health` gesendet:
+
+- **Reparaturen:** aktive offene und ignorierte Hinweise mit stabiler Quell-ID und ursprünglichem Schweregrad.
+- **Integrationsprobleme:** native Fehler- und Übergangszustände einzelner Config Entries. Geladene und bewusst deaktivierte Einträge werden ausgeschlossen.
+- **Nicht verfügbare Entitäten:** ausschließlich aktivierte Entitäten mit tatsächlichem Zustand `unavailable`. Standardmäßig gilt eine leere explizite Auswahl; alle Entitäten und lokale Gerätezuordnungen sind separat freizugeben. Eine Gerätezuordnung behauptet keinen Geräteausfall.
+- **Backups:** Status sowie beobachteter Start und erfolgreicher Abschluss nativer Backup-Läufe. Keine Dateiscans oder zusätzlichen Sensoren. Nach Start/Reload und bei verpasstem Laufbeginn bleibt der Status ehrlich `unknown`, bis ein vollständiger Lauf beobachtet wurde. Historische automatische Backup-Zeitwerte beweisen keinen letzten manuellen Erfolg. Fehlende/ausgefallene APIs ergeben `unsupported`/`unavailable`.
+
+Namen werden immer als null übertragen. Quell- und Entitäts-IDs können private Informationen enthalten; nur ausdrücklich freigegebene Bereiche und Entitäten wählen. Keine Logs, Zugangsdaten, HA-Attribute oder Backup-Inhalte verlassen HA. Es entstehen keine neuen lokalen Sensoren oder künstlichen Gesundheitswerte.
+
+Der Bericht enthält höchstens **100 Reparaturen, 256 Config Entries, 1.000 Entitäten und 262.144 Bytes**. Überschreitungen ergeben einen deterministischen Teilbestand mit `coverage: partial` und bekannter Gesamtzahl bzw. null. Ein eigener begrenzter Retry-Puffer und Backoff lassen Heartbeats und Snapshot v2 unabhängig weiterlaufen. Details zu Quellen, Backup-Grenzen, Datenschutz und Tests: [Health-Erfassung](docs/HEALTH_COLLECTION.md).
 
 ## Verbindungsfehler und Grenzen
 
@@ -101,7 +114,7 @@ Optionaler Gegencheck gegen den **echten Laravel-Validator** des benachbarten Ch
 HA_MONITOR_LARAVEL_PATH=/home/adrian/ha-monitor .venv/bin/pytest tests/test_laravel_contract.py
 ```
 
-Dieser Test bootet Laravel über Sail und validiert nur die erzeugten Payloads mit `MonitoringSnapshotV2Request`; er ruft keinen Controller auf, verwendet keine echten Zugangsdaten und schreibt keine Monitoringdaten. Geprüft werden alle nativen Deaktivierungsgründe, der Startup-Snapshot und eine teilweise Sammlung mit 161 Quellen. Ohne die Umgebungsvariable werden diese optionalen Tests übersprungen.
+Dieser Test bootet Laravel über Sail und validiert nur die erzeugten Payloads mit `MonitoringSnapshotV2Request` und `HealthReportRequest`; er ruft keinen Controller auf, verwendet keine echten Zugangsdaten und schreibt keine Monitoringdaten. Geprüft werden alle nativen Deaktivierungsgründe, der Startup-Snapshot und eine teilweise Sammlung mit 161 Quellen. Health prüft zusätzlich vollständige/ausgewählte/Startup-Berichte, Größenüberschreitungen und laufende/erfolgreiche/fehlgeschlagene Backups. Ohne die Umgebungsvariable werden diese optionalen Tests übersprungen.
 
 Offizielles hassfest lokal mit Docker:
 
@@ -124,6 +137,8 @@ Manueller Abnahmetest mit einem regulär gültigen HTTPS-Empfänger:
 ## Architektur
 
 `collectors.py` erfasst Ressourcen und Inventarsummen; `updates.py` hält das lokale Update-Inventar und die v2-Projektion. Datei-/OS-Zugriffe laufen ausschließlich über `hass.async_add_executor_job`. `monitoring.py` hält einen gemeinsamen `DataUpdateCoordinator` als Datenstand für Sensoren; ein eigener HA-Intervalltimer startet alle 60 Sekunden höchstens eine Erfassung, unabhängig von aktiviertem Entitätspolling oder lokalen Sensoren; einzelne Collector-Fehler ersetzen Werte durch Verfügbarkeitszustände. Keine per-Entity-Taskflut, keine Backend-Aufrufe beim Sammeln.
+
+`health_collectors.py` erfasst die vier Health-Bereiche ohne Transport; `health.py` hält einen unabhängigen Fünf-Minuten-Timer und Health-v1-Uploader mit separatem Zustand.
 
 `sender.py` bleibt der eigenständige Heartbeat-Worker im Runtime-Objekt `entry.runtime_data`. Daran hängt der lokale Monitoring-Coordinator mit einem separaten Uploader. Die Aufgaben warten nicht aufeinander. `client.py` teilt verifiziertes HTTPS, Authentifizierung und Bestätigungsvalidierung zwischen beiden dokumentierten Endpunkten. Plattformen lesen den gemeinsamen Datenstand. Unload beendet Timer, Listener und Entry-gebundene Hintergrundaufgaben; ein bereits im Betriebssystem laufender Executor-Aufruf kann durch Python nicht zwangsweise beendet werden.
 
