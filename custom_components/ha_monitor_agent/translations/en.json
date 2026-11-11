@@ -48,7 +48,7 @@
     "step": {
       "init": {
         "title": "Monitoring and transmission",
-        "description": "Monitoring Snapshot v2 transmits all discovered update sources by default, including hidden sources and updates installed outside Home Assistant. Failed sources produce partial coverage while known updates are still transmitted. Original versions, categories and the allowed source/device metadata are included. Explicitly saved source restrictions remain in effect. Disable all-source transmission to export only Core/OS and selected sources. Monitoring transmission is initially off; local collection continues when uploads are paused. Changes reload the integration and discard retry buffers. Collection runs on the agent’s own 60-second clock, independently of Home Assistant entity polling. Health v1 is separately opt-in and reports every five minutes. Select approved domains and entities; all-entity export and device associations require separate choices. Names are never transmitted. Backup status remains unknown until a full native backup lifecycle has been observed since loading this integration.",
+        "description": "Monitoring Snapshot v2 transmits all discovered update sources by default, including hidden sources and updates installed outside Home Assistant. Failed sources produce partial coverage while known updates are still transmitted. Original versions, categories and the allowed source/device metadata are included. Explicitly saved source restrictions remain in effect. Disable all-source transmission to export only Core/OS and selected sources. Monitoring transmission is initially off; local collection continues when uploads are paused. Changes reload the integration and discard retry buffers. Collection runs on the agent’s own 60-second clock, independently of Home Assistant entity polling. Health v1 is separately opt-in and reports every five minutes. Select approved domains and entities; all-entity export and device associations require separate choices. Health waits until HA has fully started. Names require separate approval; use reviewed labels without credentials only. Current backup status remains unknown until a full native lifecycle has been observed. Confirmed earlier observations remain local historical diagnostics only.",
         "data": {
           "enabled": "Enable transmission",
           "monitoring_enabled": "Transmit monitoring snapshots",
@@ -61,7 +61,12 @@
           "health_sections": "Health domains to collect and transmit",
           "health_all_entities": "Transmit all enabled unavailable entities",
           "health_entities": "Unavailable entity export selection",
-          "health_devices": "Include local device IDs for unavailable entities"
+          "health_devices": "Associate entities with local device IDs (for device ignores)",
+          "health_names": "Transmit reviewed integration, entity and device names"
+        },
+        "data_description": {
+          "health_devices": "Includes stable local device IDs for reported entities. No hardware identifiers or device-outage assertion. Device names also require name approval.",
+          "health_names": "Off by default. Approves config-entry titles and entity/device registry names. Labels can contain private details: review them and remove credentials before enabling. No HA state attributes or repair text."
         }
       }
     }

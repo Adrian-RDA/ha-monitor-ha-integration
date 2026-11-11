@@ -12,6 +12,7 @@ from uuid import uuid4
 from homeassistant.const import EVENT_COMPONENT_LOADED
 from homeassistant.core import CoreState, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util
 
 from .client import encode_payload
@@ -22,6 +23,7 @@ from .const import (
     CONF_HEALTH_DEVICES,
     CONF_HEALTH_ENABLED,
     CONF_HEALTH_ENTITIES,
+    CONF_HEALTH_NAMES,
     CONF_HEALTH_SECTIONS,
     CONF_INSTANCE_ID,
     HEALTH_INTERVAL,
@@ -36,6 +38,7 @@ from .health_collectors import (
     neutral_backup,
     neutral_collection,
 )
+from .health_history import BackupHistory
 from .monitoring import FrozenSnapshot, MonitoringUploader
 
 if TYPE_CHECKING:
@@ -130,10 +133,14 @@ class HealthCoordinator:
     ) -> None:
         self.hass, self.entry = hass, entry
         self.uploader = HealthUploader(hass, entry, heartbeat)
-        self.backup = BackupCollector(hass)
+        self.backup_history = BackupHistory(hass, entry.entry_id)
+        self.backup = BackupCollector(hass, self.backup_history.observed)
         self.data: dict[str, Any] | None = None
         self._unsubscribe = None
         self._component_listener = None
+        self._start_listener = None
+        self._started = False
+        self._history_task: asyncio.Task | None = None
         self._task: asyncio.Task | None = None
         self._stopped = False
         entry.async_on_unload(self.async_stop)
@@ -144,13 +151,30 @@ class HealthCoordinator:
 
     @callback
     def async_start(self) -> None:
-        if not self.enabled or self._stopped or self._unsubscribe is not None:
+        if not self.enabled or self._stopped or self._started:
             return
+        self._started = True
         if "backup" in self.entry.options.get(CONF_HEALTH_SECTIONS, HEALTH_SECTIONS):
+            self._history_task = self.entry.async_create_background_task(
+                self.hass,
+                self.backup_history.async_load(),
+                "HA Monitor backup history load",
+                eager_start=False,
+            )
             self._attach_backup()
             self._component_listener = self.hass.bus.async_listen(
                 EVENT_COMPONENT_LOADED, self._component_loaded
             )
+        self._start_listener = async_at_started(self.hass, self._at_started)
+
+    @callback
+    def _at_started(self, _hass: HomeAssistant) -> None:
+        if (
+            self._stopped
+            or self.hass.state is not CoreState.running
+            or self._unsubscribe is not None
+        ):
+            return
         self._unsubscribe = async_track_time_interval(
             self.hass,
             self._tick,
@@ -162,6 +186,8 @@ class HealthCoordinator:
 
     @callback
     def _attach_backup(self) -> None:
+        if self._stopped:
+            return
         try:
             self.backup.attach()
         except Exception:
@@ -175,7 +201,12 @@ class HealthCoordinator:
 
     @callback
     def _tick(self, _now: datetime) -> None:
-        if self._stopped or self._task is not None and not self._task.done():
+        if (
+            self._stopped
+            or self.hass.state is not CoreState.running
+            or self._task is not None
+            and not self._task.done()
+        ):
             return
         self._task = self.entry.async_create_background_task(
             self.hass,
@@ -185,7 +216,15 @@ class HealthCoordinator:
         )
 
     async def async_collect(self) -> None:
+        # No new UUID, timestamp, empty replacement or export before HA is ready.
+        if (
+            not self.enabled
+            or self._stopped
+            or self.hass.state is not CoreState.running
+        ):
+            return
         instance = self.entry.data[CONF_INSTANCE_ID]
+        include_names = self.entry.options.get(CONF_HEALTH_NAMES, False)
         sections = self.entry.options.get(CONF_HEALTH_SECTIONS, HEALTH_SECTIONS)
         scope = (
             "all"
@@ -195,21 +234,22 @@ class HealthCoordinator:
         report: dict[str, Any] = {"report_id": str(uuid4())}
         collectors = {
             "repairs": lambda: collect_repairs(self.hass, instance),
-            "config_entries": lambda: collect_config_entries(self.hass, instance),
+            "config_entries": lambda: collect_config_entries(
+                self.hass, instance, include_names=include_names
+            ),
             "unavailable_entities": lambda: collect_unavailable_entities(
                 self.hass,
                 instance,
                 all_entities=scope == "all",
                 selected=self.entry.options.get(CONF_HEALTH_ENTITIES, []),
                 include_devices=self.entry.options.get(CONF_HEALTH_DEVICES, False),
+                include_names=include_names,
             ),
         }
         for section, collect in collectors.items():
             section_scope = scope if section == "unavailable_entities" else "all"
             if section not in sections:
                 report[section] = neutral_collection("unsupported", section_scope)
-            elif self.hass.state is not CoreState.running:
-                report[section] = neutral_collection("unknown", section_scope)
             else:
                 try:
                     report[section] = collect()
@@ -234,10 +274,14 @@ class HealthCoordinator:
 
     async def async_stop(self) -> None:
         self._stopped = True
-        for unsubscribe in (self._unsubscribe, self._component_listener):
+        for unsubscribe in (
+            self._unsubscribe,
+            self._component_listener,
+            self._start_listener,
+        ):
             if unsubscribe is not None:
                 unsubscribe()
-        self._unsubscribe = self._component_listener = None
+        self._unsubscribe = self._component_listener = self._start_listener = None
         if self._task is not None:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
@@ -245,3 +289,9 @@ class HealthCoordinator:
             self._task = None
         self.backup.stop()
         await self.uploader.async_stop()
+        if self._history_task is not None:
+            self._history_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._history_task
+            self._history_task = None
+        await self.backup_history.async_flush()

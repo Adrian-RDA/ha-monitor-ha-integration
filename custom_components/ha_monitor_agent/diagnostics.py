@@ -68,6 +68,10 @@ async def async_get_config_entry_diagnostics(
             "pending_reports": health.uploader.pending_snapshots,
             "dropped_reports": health.uploader.dropped_snapshots,
             "last_observed_at": health.data["observed_at"] if health.data else None,
+            "backup_history": {
+                "interpretation": "historical_only",
+                "last_confirmed": health.backup_history.last_confirmed,
+            },
             "coverage": {
                 key: health.data[key]["coverage"] if health.data else "unknown"
                 for key in (

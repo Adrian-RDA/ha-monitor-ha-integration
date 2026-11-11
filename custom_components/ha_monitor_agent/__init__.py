@@ -9,6 +9,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .client import AgentClient
 from .const import CONF_SERVER_URL, DOMAIN
 from .health import HealthCoordinator
+from .health_history import backup_history_store
 from .monitoring import MonitoringCoordinator
 from .sender import HeartbeatSender
 
@@ -66,3 +67,4 @@ async def async_remove_entry(hass: HomeAssistant, entry: AgentConfigEntry) -> No
     ir.async_delete_issue(hass, DOMAIN, f"monitoring_blocked_{entry.entry_id}")
     ir.async_delete_issue(hass, DOMAIN, f"health_blocked_{entry.entry_id}")
     ir.async_delete_issue(hass, DOMAIN, f"update_export_incomplete_{entry.entry_id}")
+    await backup_history_store(hass, entry.entry_id).async_remove()

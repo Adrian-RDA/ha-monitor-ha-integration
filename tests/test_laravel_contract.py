@@ -130,6 +130,7 @@ async def test_startup_and_161_source_partial_inventory_pass_real_laravel_valida
         "backup_running",
         "backup_ok",
         "backup_failed",
+        "names",
     ],
 )
 async def test_health_payloads_pass_real_laravel_validator(
@@ -147,6 +148,24 @@ async def test_health_payloads_pass_real_laravel_validator(
     from .test_health_collectors import emit, repair
 
     repair(hass)
+    if scenario == "names":
+        from homeassistant.helpers import device_registry as dr
+
+        hass.config_entries.async_update_entry(entry, title="Freigegebener Eintrag")
+        device = dr.async_get(hass).async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={("test", "local")},
+            name="Wohnzimmer",
+        )
+        entity = er.async_get(hass).async_get_or_create(
+            "sensor",
+            "test",
+            "named",
+            config_entry=entry,
+            device_id=device.id,
+            original_name="Temperatur 🌡️",
+        )
+        hass.states.async_set(entity.entity_id, "unavailable")
     if scenario == "startup":
         hass.set_state(CoreState.starting)
     if scenario == "overflow":
@@ -163,7 +182,13 @@ async def test_health_payloads_pass_real_laravel_validator(
         entry,
         health_all_entities=scenario != "selected",
         health_entities=["sensor.health_problem"],
+        health_names=scenario == "names",
+        health_devices=scenario == "names",
     )
+    if scenario == "startup":
+        assert health.data is None and health.uploader._latest is None
+        hass.set_state(CoreState.running)
+        await health.async_collect()
     if scenario.startswith("backup_"):
         emit(manager, CreateBackupState.IN_PROGRESS)
         if scenario == "backup_ok":

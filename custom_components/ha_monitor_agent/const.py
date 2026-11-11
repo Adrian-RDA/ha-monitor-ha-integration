@@ -37,6 +37,7 @@ CONF_HEALTH_SECTIONS = "health_sections"
 CONF_HEALTH_ALL_ENTITIES = "health_all_entities"
 CONF_HEALTH_ENTITIES = "health_entities"
 CONF_HEALTH_DEVICES = "health_devices"
+CONF_HEALTH_NAMES = "health_names"
 HEALTH_SECTIONS = ("repairs", "config_entries", "unavailable_entities", "backup")
 HEALTH_INTERVAL = 300
 MAX_HEALTH_BODY_BYTES = 262_144

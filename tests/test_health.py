@@ -7,6 +7,8 @@ from unittest.mock import patch
 from homeassistant.components.backup.manager import CreateBackupState
 from homeassistant.config_entries import ConfigEntryDisabler
 from homeassistant.core import CoreState
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 import pytest
@@ -158,9 +160,91 @@ async def test_collection_failure_does_not_reissue_stale_findings_or_affect_peer
     }
     assert health.data["config_entries"]["coverage"] == "complete"
     assert first["report_id"] != health.data["report_id"]
+    previous = health.data
+    queued = health.uploader._latest
     hass.set_state(CoreState.starting)
     await health.async_collect()
-    assert health.data["config_entries"]["coverage"] == "unknown"
+    assert health.data is previous
+    assert health.uploader._latest is queued
+    hass.set_state(CoreState.running)
+    await health.async_collect()
+    assert health.data["repairs"]["coverage"] == "complete"
+    assert health.data["repairs"]["total"] == 1
+
+
+async def test_names_require_consent_and_device_ids_stay_stable_on_reload(
+    hass, backend, entry
+):
+    hass.config_entries.async_update_entry(entry, title="Freigegebene Integration")
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={("test", backend.code)},
+        name="Originalgerät",
+    )
+    dr.async_get(hass).async_update_device(device.id, name_by_user="Wohnzimmer")
+    registry = er.async_get(hass)
+    entity = registry.async_get_or_create(
+        "sensor",
+        "test",
+        "approved",
+        config_entry=entry,
+        device_id=device.id,
+        original_name="Originalname",
+    )
+    registry.async_update_entity(entity.entity_id, name="Temperatur")
+    hass.states.async_set(
+        entity.entity_id, "unavailable", {"friendly_name": backend.token}
+    )
+    hass.states.async_set(
+        "sensor.unregistered", "unavailable", {"friendly_name": backend.code}
+    )
+    health = await make_health(
+        hass, backend, entry, health_all_entities=True, health_devices=True
+    )
+    default = health.data["unavailable_entities"]["items"]
+    assert all(item["name"] is None for item in default)
+    assert all(
+        item["device"] is None or item["device"]["name"] is None for item in default
+    )
+    assert health.data["config_entries"]["items"][0]["name"] is None
+    await health.async_stop()
+    health = await make_health(
+        hass,
+        backend,
+        entry,
+        health_all_entities=True,
+        health_devices=True,
+        health_names=True,
+    )
+    named = next(
+        item for item in health.data["unavailable_entities"]["items"] if item["device"]
+    )
+    assert named["name"] == "Temperatur"
+    assert named["device"] == {"id": device.id, "name": "Wohnzimmer"}
+    assert (
+        named["device"]["id"]
+        == next(item for item in default if item["device"])["device"]["id"]
+    )
+    assert (
+        health.data["config_entries"]["items"][0]["name"] == "Freigegebene Integration"
+    )
+    unregistered = next(
+        item
+        for item in health.data["unavailable_entities"]["items"]
+        if item["entity_id"] == "sensor.unregistered"
+    )
+    assert unregistered["name"] is unregistered["device"] is None
+    await health.uploader.async_send_once()
+    payload = json.dumps(backend.health_requests[-1][0])
+    assert backend.token not in payload and backend.code not in payload
+    # Name approval alone cannot opt in to device association.
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, "health_devices": False}
+    )
+    await health.async_collect()
+    assert all(
+        item["device"] is None for item in health.data["unavailable_entities"]["items"]
+    )
 
 
 async def test_retry_frozen_report_id_time_coalescing_and_quota(
@@ -325,6 +409,8 @@ async def test_backup_late_load_attach_and_unload_removes_subscription(
     await health.async_collect()
     assert health.data["backup"]["status"] == "ok"
     await health.async_stop()
+    assert health.backup._unsubscribe is None
+    health._component_loaded(Event(EVENT_COMPONENT_LOADED, {"component": "backup"}))
     assert health.backup._unsubscribe is None
     emit(manager, CreateBackupState.IN_PROGRESS)
     assert health.backup._data["status"] == "unknown"

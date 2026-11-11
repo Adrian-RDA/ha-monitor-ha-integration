@@ -1,4 +1,4 @@
-"""Read-only Health v1 collectors. No transport, raw attributes or free text."""
+"""Read-only Health v1 collectors. No transport or raw attributes."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import hashlib
 import heapq
 import re
 from typing import Any
+import unicodedata
 
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, callback
@@ -26,6 +27,8 @@ ENTRY_STATES = {
     "setup_in_progress",
     "unload_in_progress",
 }
+# This is a wire-state allowlist, not an error list. In particular NOT_LOADED
+# proves no failure; setup/unload-in-progress are transitional observations.
 
 
 def neutral_collection(coverage: str, scope: str = "all") -> dict[str, Any]:
@@ -108,7 +111,24 @@ def collect_repairs(hass: HomeAssistant, instance_id: str) -> dict[str, Any]:
     return _collection(ir.async_get(hass).issues.values(), project, 100, "all")
 
 
-def collect_config_entries(hass: HomeAssistant, instance_id: str) -> dict[str, Any]:
+def approved_name(value: Any) -> str | None:
+    """Only explicitly approved registry labels, bounded without rewriting them."""
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 120
+        or any(
+            unicodedata.category(char).startswith("C")
+            or unicodedata.category(char) in {"Zl", "Zp"}
+            for char in value
+        )
+    ):
+        return None
+    return value
+
+
+def collect_config_entries(
+    hass: HomeAssistant, instance_id: str, *, include_names: bool = False
+) -> dict[str, Any]:
     def project(entry):
         if entry.disabled_by is not None or entry.state.value == "loaded":
             return None
@@ -117,7 +137,7 @@ def collect_config_entries(hass: HomeAssistant, instance_id: str) -> dict[str, A
         return {
             "key": source_key(entry.entry_id, instance_id),
             "domain": _domain(entry.domain),
-            "name": None,
+            "name": approved_name(entry.title) if include_names else None,
             "state": entry.state.value,
         }
 
@@ -131,6 +151,7 @@ def collect_unavailable_entities(
     all_entities: bool = False,
     selected: Iterable[str] = (),
     include_devices: bool = False,
+    include_names: bool = False,
 ) -> dict[str, Any]:
     registry = er.async_get(hass)
     devices = dr.async_get(hass) if include_devices else None
@@ -155,8 +176,15 @@ def collect_unavailable_entities(
         )
         return {
             "entity_id": entity_id,
-            "name": None,
-            "device": {"id": source_key(device.id, instance_id), "name": None}
+            "name": approved_name(entry.name or entry.original_name)
+            if include_names and entry
+            else None,
+            "device": {
+                "id": source_key(device.id, instance_id),
+                "name": approved_name(device.name_by_user or device.name)
+                if include_names
+                else None,
+            }
             if device
             else None,
         }
@@ -178,8 +206,13 @@ class BackupCollector:
     cannot describe manual attempts, so they are deliberately not merged here.
     """
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        on_confirmed: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         self.hass = hass
+        self._on_confirmed = on_confirmed
         self._manager = None
         self._unsubscribe = None
         self._data = neutral_backup()
@@ -208,8 +241,11 @@ class BackupCollector:
             return "unsupported"
         if manager is not self._manager:
             self.stop()
+            # Publish attachment only after subscription succeeds. Otherwise a
+            # transient registration error would suppress all later retries.
+            unsubscribe = manager.async_subscribe_events(self._on_event)
             self._manager = manager
-            self._unsubscribe = manager.async_subscribe_events(self._on_event)
+            self._unsubscribe = unsubscribe
         return "complete"
 
     @callback
@@ -252,6 +288,17 @@ class BackupCollector:
                 "last_success_at": now if success else self._data["last_success_at"],
                 "error_code": None if success else self._classify(event.reason),
             }
+            # Reject clock rollback before retaining any confirmed history. I/O
+            # failures must not erase a valid live observation or escape to HA.
+            if self._snapshot(datetime.fromisoformat(now))["status"] in {
+                "ok",
+                "failed",
+            }:
+                if self._on_confirmed is not None:
+                    try:
+                        self._on_confirmed({**self._data, "observed_at": now})
+                    except Exception:
+                        pass
 
     @staticmethod
     def _classify(reason: str | None) -> str:
@@ -264,6 +311,9 @@ class BackupCollector:
         coverage = self.attach()
         if coverage != "complete":
             return neutral_backup(coverage)
+        return self._snapshot(observed_at)
+
+    def _snapshot(self, observed_at: datetime) -> dict[str, Any]:
         data = self._data
         attempt, success = data["last_attempt_at"], data["last_success_at"]
         # Clock rollback cannot produce invalid/future or inverted backup times.

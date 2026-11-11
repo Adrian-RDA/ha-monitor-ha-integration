@@ -39,6 +39,7 @@ from .const import (
     CONF_HEALTH_DEVICES,
     CONF_HEALTH_ENABLED,
     CONF_HEALTH_ENTITIES,
+    CONF_HEALTH_NAMES,
     CONF_HEALTH_SECTIONS,
     CONF_INSTANCE_ID,
     CONF_MONITORING_ENABLED,
@@ -210,6 +211,10 @@ class AgentOptionsFlow(OptionsFlowWithReload):
                         default=self.config_entry.options.get(
                             CONF_HEALTH_DEVICES, False
                         ),
+                    ): bool,
+                    probatio.Required(
+                        CONF_HEALTH_NAMES,
+                        default=self.config_entry.options.get(CONF_HEALTH_NAMES, False),
                     ): bool,
                     probatio.Required(
                         CONF_EXPORT_METRICS,

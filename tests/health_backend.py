@@ -1,9 +1,18 @@
 """Independent Health v1 receiver validation for the simulated TLS backend."""
 
 import re
+import unicodedata
 from uuid import UUID
 
 from homeassistant.util import dt as dt_util
+
+
+def validate_name(value):
+    assert value is None or (
+        isinstance(value, str)
+        and 1 <= len(value) <= 120
+        and not any(unicodedata.category(char).startswith("C") for char in value)
+    )
 
 
 def validate_health(payload):
@@ -47,7 +56,7 @@ def validate_health(payload):
             assert total is None and not items
         keys = set()
         for item in items:
-            assert item["name"] is None  # This sender never approves names.
+            validate_name(item["name"])
             key = item["entity_id" if section == "unavailable_entities" else "key"]
             assert key not in keys
             keys.add(key)
@@ -58,7 +67,7 @@ def validate_health(payload):
                 )
                 if item["device"] is not None:
                     assert set(item["device"]) == {"id", "name"}
-                    assert item["device"]["name"] is None
+                    validate_name(item["device"]["name"])
                     assert re.fullmatch(
                         r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", item["device"]["id"]
                     )

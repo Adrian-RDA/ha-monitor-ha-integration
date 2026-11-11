@@ -57,14 +57,18 @@ Neun zusätzliche lokale Diagnosesensoren (CPU/RAM/Disk, fünf Summen, verfügba
 
 ## Systemgesundheit (Sprint 6, ab 0.4.0)
 
-Unter **Konfigurieren** lässt sich **Health-v1-Erfassung und -Übertragung** unabhängig von Monitoring Snapshot v2 aktivieren. Standardmäßig ist Health ausgeschaltet. Die freigegebenen Bereiche werden sofort und danach alle **fünf Minuten** als vollständiger Bericht an `/api/v1/agents/health` gesendet:
+Unter **Konfigurieren** lässt sich **Health-v1-Erfassung und -Übertragung** unabhängig von Monitoring Snapshot v2 aktivieren. Standardmäßig ist Health ausgeschaltet. Die erste echte Erhebung erfolgt unmittelbar nach vollständigem HA-Start (`running`), bei Reload im laufenden HA sofort. Während des Starts werden keine künstlich leeren Health-Berichte erzeugt oder übertragen. Danach werden die freigegebenen Bereiche alle **fünf Minuten** als vollständiger Bericht an `/api/v1/agents/health` gesendet:
 
 - **Reparaturen:** aktive offene und ignorierte Hinweise mit stabiler Quell-ID und ursprünglichem Schweregrad.
-- **Integrationsprobleme:** native Fehler- und Übergangszustände einzelner Config Entries. Geladene und bewusst deaktivierte Einträge werden ausgeschlossen.
+- **Integrationsprobleme:** native Fehler-, Übergangs- und neutrale Zustände einzelner Config Entries. `not_loaded` bedeutet „nicht geladen“ und beweist keine Störung; der Zustand wird unverändert übertragen. Geladene und bewusst deaktivierte Einträge werden ausgeschlossen.
 - **Nicht verfügbare Entitäten:** ausschließlich aktivierte Entitäten mit tatsächlichem Zustand `unavailable`. Standardmäßig gilt eine leere explizite Auswahl; alle Entitäten und lokale Gerätezuordnungen sind separat freizugeben. Eine Gerätezuordnung behauptet keinen Geräteausfall.
 - **Backups:** Status sowie beobachteter Start und erfolgreicher Abschluss nativer Backup-Läufe. Keine Dateiscans oder zusätzlichen Sensoren. Nach Start/Reload und bei verpasstem Laufbeginn bleibt der Status ehrlich `unknown`, bis ein vollständiger Lauf beobachtet wurde. Historische automatische Backup-Zeitwerte beweisen keinen letzten manuellen Erfolg. Fehlende/ausgefallene APIs ergeben `unsupported`/`unavailable`.
 
-Namen werden immer als null übertragen. Quell- und Entitäts-IDs können private Informationen enthalten; nur ausdrücklich freigegebene Bereiche und Entitäten wählen. Keine Logs, Zugangsdaten, HA-Attribute oder Backup-Inhalte verlassen HA. Es entstehen keine neuen lokalen Sensoren oder künstlichen Gesundheitswerte.
+Bestätigte Backup-Abschlüsse bleiben als begrenzte lokale Historie über Reload/Neustart erhalten: letzter vollständig beobachteter Lauf, Start-/Beobachtungszeit, bekannter Erfolg und sicherer Fehlercode. Der private, atomar geschriebene HA-Speicher enthält keine Backup-Inhalte oder Zugangsdaten und wird beim Entfernen der Integration gelöscht. Die Diagnose kennzeichnet diese Daten als `historical_only`. Sie werden nach einer Beobachtungslücke nicht als aktueller Backup-Status exportiert; der Health-v1-Vertrag bleibt unverändert. Persistenz ist bestmöglich: ein harter Abbruch vor dem Schreiben oder ein Speicherfehler kann die jüngste Beobachtung verlieren.
+
+Namen bleiben standardmäßig null. Optional lassen sich unter **Geprüfte Integrations-, Entitäts- und Gerätenamen übertragen** Config-Entry-Titel sowie Namen aus den Entitäts-/Geräteregistries freigeben. Vorher private Angaben und Zugangsdaten aus den Bezeichnungen entfernen. Ungültige oder überlange Namen bleiben null; Reparaturtexte und `friendly_name`-Zustandsattribute werden nicht gelesen. Gerätenamen erfordern zusätzlich **Entitäten lokalen Geräte-IDs zuordnen (für Geräte-Ignore)**. Diese Zuordnung verwendet die stabile lokale Registry-ID, keine MAC-/IP-/Seriennummer; Umbenennen ändert die ID nicht. Ein neu angelegter Registry-Geräteeintrag kann eine neue ID bekommen.
+
+Quell- und Entitäts-IDs können ebenfalls private Informationen enthalten; nur ausdrücklich freigegebene Bereiche und Entitäten wählen. Keine Logs, Zugangsdaten, HA-Attribute oder Backup-Inhalte verlassen HA. Es entstehen keine neuen lokalen Sensoren oder künstlichen Gesundheitswerte.
 
 Der Bericht enthält höchstens **100 Reparaturen, 256 Config Entries, 1.000 Entitäten und 262.144 Bytes**. Überschreitungen ergeben einen deterministischen Teilbestand mit `coverage: partial` und bekannter Gesamtzahl bzw. null. Ein eigener begrenzter Retry-Puffer und Backoff lassen Heartbeats und Snapshot v2 unabhängig weiterlaufen. Details zu Quellen, Backup-Grenzen, Datenschutz und Tests: [Health-Erfassung](docs/HEALTH_COLLECTION.md).
 
@@ -114,7 +118,7 @@ Optionaler Gegencheck gegen den **echten Laravel-Validator** des benachbarten Ch
 HA_MONITOR_LARAVEL_PATH=/home/adrian/ha-monitor .venv/bin/pytest tests/test_laravel_contract.py
 ```
 
-Dieser Test bootet Laravel über Sail und validiert nur die erzeugten Payloads mit `MonitoringSnapshotV2Request` und `HealthReportRequest`; er ruft keinen Controller auf, verwendet keine echten Zugangsdaten und schreibt keine Monitoringdaten. Geprüft werden alle nativen Deaktivierungsgründe, der Startup-Snapshot und eine teilweise Sammlung mit 161 Quellen. Health prüft zusätzlich vollständige/ausgewählte/Startup-Berichte, Größenüberschreitungen und laufende/erfolgreiche/fehlgeschlagene Backups. Ohne die Umgebungsvariable werden diese optionalen Tests übersprungen.
+Dieser Test bootet Laravel über Sail und validiert nur die erzeugten Payloads mit `MonitoringSnapshotV2Request` und `HealthReportRequest`; er ruft keinen Controller auf, verwendet keine echten Zugangsdaten und schreibt keine Monitoringdaten. Geprüft werden alle nativen Deaktivierungsgründe, der Startup-Snapshot und eine teilweise Sammlung mit 161 Quellen. Health prüft zusätzlich vollständige/ausgewählte Berichte, den ersten echten Bericht nach dem Start, freigegebene Anzeigenamen/Gerätezuordnungen, Größenüberschreitungen und laufende/erfolgreiche/fehlgeschlagene Backups. Ohne die Umgebungsvariable werden diese optionalen Tests übersprungen.
 
 Offizielles hassfest lokal mit Docker:
 
@@ -138,7 +142,7 @@ Manueller Abnahmetest mit einem regulär gültigen HTTPS-Empfänger:
 
 `collectors.py` erfasst Ressourcen und Inventarsummen; `updates.py` hält das lokale Update-Inventar und die v2-Projektion. Datei-/OS-Zugriffe laufen ausschließlich über `hass.async_add_executor_job`. `monitoring.py` hält einen gemeinsamen `DataUpdateCoordinator` als Datenstand für Sensoren; ein eigener HA-Intervalltimer startet alle 60 Sekunden höchstens eine Erfassung, unabhängig von aktiviertem Entitätspolling oder lokalen Sensoren; einzelne Collector-Fehler ersetzen Werte durch Verfügbarkeitszustände. Keine per-Entity-Taskflut, keine Backend-Aufrufe beim Sammeln.
 
-`health_collectors.py` erfasst die vier Health-Bereiche ohne Transport; `health.py` hält einen unabhängigen Fünf-Minuten-Timer und Health-v1-Uploader mit separatem Zustand.
+`health_collectors.py` erfasst die vier Health-Bereiche ohne Transport; `health.py` hält die HA-Startfreigabe, einen unabhängigen Fünf-Minuten-Timer und Health-v1-Uploader mit separatem Zustand. `health_history.py` bewahrt ausschließlich bestätigte lokale Backup-Metadaten auf und speist keine historischen Werte in aktuelle Reports ein.
 
 `sender.py` bleibt der eigenständige Heartbeat-Worker im Runtime-Objekt `entry.runtime_data`. Daran hängt der lokale Monitoring-Coordinator mit einem separaten Uploader. Die Aufgaben warten nicht aufeinander. `client.py` teilt verifiziertes HTTPS, Authentifizierung und Bestätigungsvalidierung zwischen beiden dokumentierten Endpunkten. Plattformen lesen den gemeinsamen Datenstand. Unload beendet Timer, Listener und Entry-gebundene Hintergrundaufgaben; ein bereits im Betriebssystem laufender Executor-Aufruf kann durch Python nicht zwangsweise beendet werden.
 

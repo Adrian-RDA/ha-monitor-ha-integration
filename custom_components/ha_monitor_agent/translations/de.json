@@ -48,7 +48,7 @@
     "step": {
       "init": {
         "title": "Monitoring und Übertragung",
-        "description": "Monitoring Snapshot v2 überträgt standardmäßig alle gefundenen Update-Quellen, einschließlich versteckter Quellen und extern zu installierender Updates. Fehlerhafte Quellen führen zu einer Teil-Erfassung; bekannte Updates werden weiterhin übertragen. Originalversionen, Kategorien und freigegebene Quellen-/Gerätemetadaten sind enthalten. Explizit gespeicherte Quelleneinschränkungen bleiben erhalten. Für ausschließlich Core/OS und ausgewählte Quellen die Übertragung aller Quellen ausschalten. Monitoring-Uploads sind zunächst aus; lokale Erfassung läuft bei pausierten Uploads weiter. Änderungen laden die Integration neu und verwerfen Wiederholungspuffer. Die Erfassung läuft im eigenen 60-Sekunden-Takt, unabhängig vom Home-Assistant-Polling für Entitäten. Health v1 ist separat zuschaltbar und meldet alle fünf Minuten. Bereiche und Entitäten ausdrücklich auswählen; alle Entitäten und Gerätezuordnungen sind separat freizugeben. Namen werden nie übertragen. Backup-Daten bleiben unbekannt, bis seit dem Laden dieser Integration ein vollständiger nativer Backup-Lauf beobachtet wurde.",
+        "description": "Monitoring Snapshot v2 überträgt standardmäßig alle gefundenen Update-Quellen, einschließlich versteckter Quellen und extern zu installierender Updates. Fehlerhafte Quellen führen zu einer Teil-Erfassung; bekannte Updates werden weiterhin übertragen. Originalversionen, Kategorien und freigegebene Quellen-/Gerätemetadaten sind enthalten. Explizit gespeicherte Quelleneinschränkungen bleiben erhalten. Für ausschließlich Core/OS und ausgewählte Quellen die Übertragung aller Quellen ausschalten. Monitoring-Uploads sind zunächst aus; lokale Erfassung läuft bei pausierten Uploads weiter. Änderungen laden die Integration neu und verwerfen Wiederholungspuffer. Die Erfassung läuft im eigenen 60-Sekunden-Takt, unabhängig vom Home-Assistant-Polling für Entitäten. Health v1 ist separat zuschaltbar und meldet alle fünf Minuten. Bereiche und Entitäten ausdrücklich auswählen; alle Entitäten und Gerätezuordnungen sind separat freizugeben. Health startet erst nach vollständigem HA-Start. Namen sind separat freizugeben; nur geprüfte Bezeichnungen ohne Zugangsdaten verwenden. Der aktuelle Backup-Status bleibt bis zu einem vollständig beobachteten nativen Lauf unbekannt. Bestätigte frühere Beobachtungen bleiben ausschließlich lokal als historischer Diagnosestand erhalten.",
         "data": {
           "enabled": "Übertragung aktivieren",
           "monitoring_enabled": "Monitoring-Snapshots übertragen",
@@ -61,7 +61,12 @@
           "health_sections": "Health-Bereiche zur Erfassung und Übertragung",
           "health_all_entities": "Alle aktivierten nicht verfügbaren Entitäten übertragen",
           "health_entities": "Entitätsauswahl für Nichtverfügbarkeitsmeldungen",
-          "health_devices": "Lokale Geräte-IDs nicht verfügbarer Entitäten übertragen"
+          "health_devices": "Entitäten lokalen Geräte-IDs zuordnen (für Geräte-Ignore)",
+          "health_names": "Geprüfte Integrations-, Entitäts- und Gerätenamen übertragen"
+        },
+        "data_description": {
+          "health_devices": "Überträgt stabile, lokale Geräte-IDs der gemeldeten Entitäten. Keine Hardwarekennungen und keine Aussage über einen Geräteausfall. Gerätenamen erfordern zusätzlich die Namensfreigabe.",
+          "health_names": "Standardmäßig aus. Gibt Config-Entry-Titel und Namen aus den Entitäts-/Geräteregistries frei. Bezeichnungen können private Angaben enthalten: vor Aktivierung prüfen und Zugangsdaten entfernen. Keine HA-Zustandsattribute oder Reparaturtexte."
         }
       }
     }

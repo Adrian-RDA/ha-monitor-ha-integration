@@ -198,6 +198,7 @@ async def test_health_options_explicit_consent_and_source_selection(
             "health_all_entities": False,
             "health_entities": ["sensor.approved"],
             "health_devices": True,
+            "health_names": True,
         },
     )
     assert result["type"] == "create_entry"
@@ -206,5 +207,6 @@ async def test_health_options_explicit_consent_and_source_selection(
     assert entry.options["health_entities"] == ["sensor.approved"]
     assert entry.options["health_all_entities"] is False
     assert entry.options["health_devices"] is True
+    assert entry.options["health_names"] is True
     assert entry.options["monitoring_enabled"] is False
     assert dict(entry.data) == original_data

@@ -151,6 +151,26 @@ async def test_entities_only_actual_unavailable_enabled_and_optional_device(
 
 
 @pytest.mark.parametrize(
+    "label",
+    [
+        "",
+        "x" * 121,
+        "private\nlabel",
+        "hidden\u200bformat",
+        "private\ue000use",
+        "line\u2028break",
+    ],
+)
+async def test_invalid_approved_names_stay_null_without_losing_findings(
+    hass, entry, label
+):
+    hass.config_entries.async_update_entry(entry, title=label)
+    result = collect_config_entries(hass, entry.unique_id, include_names=True)
+    assert result["coverage"] == "complete" and result["total"] == 1
+    assert result["items"][0]["name"] is None
+
+
+@pytest.mark.parametrize(
     "section, count, cap",
     [
         ("repairs", 101, 100),
